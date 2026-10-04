@@ -31,7 +31,14 @@ function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFre
         <button className={'mini wide' + (freeMode ? ' on' : '')} onClick={() => setFreeMode(!freeMode)} title="Free transform: the corners stretch the picture wider or taller instead of keeping its shape">
           Free transform
         </button>
+        <button className={'mini wide' + (mode === 'warp' ? ' on' : '')} onClick={() => setMode(mode === 'warp' ? 'transform' : 'warp')} title="Funny warp: drag the four corners of the picture anywhere to bend it">
+          Funny warp
+        </button>
       </div>
+      {mode === 'warp' ? (
+        <WarpControls clip={clip} playhead={playhead} dispatch={dispatch} />
+      ) : (
+        <>
       <div className="mtop kfall">
         <span className="mlabel">Keyframe</span>
         <span className="kfctl">
@@ -99,12 +106,15 @@ function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFre
           </div>
         )
       })}
+        </>
+      )}
     </>
   )
 }
 
-// Funny warp: drag the four corners of the picture anywhere (corner pin). One keyframe holds the whole shape.
-function WarpPanel({ clip, playhead, dispatch, mode, setMode }) {
+// Funny warp controls (shown while Funny warp is on): drag the four corners on the preview. One keyframe
+// holds the whole shape.
+function WarpControls({ clip, playhead, dispatch }) {
   const ts = Math.min(clip.out, Math.max(clip.in, clip.in + (playhead - clip.start)))
   const inside = playhead >= clip.start - 0.001 && playhead <= clip.start + clip.dur + 0.001
   const seek = (t) => dispatch({ type: 'setPlayhead', t: clip.start + (t - clip.in), user: true })
@@ -113,14 +123,11 @@ function WarpPanel({ clip, playhead, dispatch, mode, setMode }) {
   const prev = [...keys].reverse().find((k) => k.t < ts - KEY_EPS)
   const next = keys.find((k) => k.t > ts + KEY_EPS)
   const warped = !!clip.warp && (keys.length > 0 || (clip.warp.fixed || []).some((v) => v !== 0))
-  const on = mode === 'warp'
   return (
     <>
-      <div className="insp-section">Funny warp</div>
-      <div className="mtop">
-        <button className={'mini wide' + (on ? ' on' : '')} onClick={() => setMode(on ? 'transform' : 'warp')} title="Show four handles on the preview and drag them to bend the picture">
-          <Icon name="diamond" size={11} /> {on ? 'Hide handles' : 'Funny warp on preview'}
-        </button>
+      {!inside && <div className="hint warn">Move the playhead over this clip to warp it.</div>}
+      <div className="mtop kfall">
+        <span className="mlabel">Warp keyframe</span>
         <span className="kfctl">
           <button className="mini" disabled={!prev} onClick={() => seek(prev.t)} title="Previous warp keyframe"><Icon name="left" size={12} /></button>
           <button className={'mini kf-btn' + (kf ? ' on' : '')} onClick={() => dispatch({ type: 'warpToggleKey', id: clip.id, t: ts })} title={kf ? 'Remove this warp keyframe' : 'Add a warp keyframe here (keeps the current shape)'}>
@@ -129,7 +136,6 @@ function WarpPanel({ clip, playhead, dispatch, mode, setMode }) {
           <button className="mini" disabled={!next} onClick={() => seek(next.t)} title="Next warp keyframe"><Icon name="right" size={12} /></button>
         </span>
       </div>
-      {!inside && on && <div className="hint warn">Move the playhead over this clip to warp it.</div>}
       {kf && (
         <EaseEditor
           ease={kf.ease}
@@ -138,7 +144,11 @@ function WarpPanel({ clip, playhead, dispatch, mode, setMode }) {
           onChange={(ease, bez, live) => dispatch({ type: 'warpEase', id: clip.id, t: ts, ease, bez, live })}
         />
       )}
-      {keys.length > 0 && !kf && <div className="hint left">{keys.length} keyframe{keys.length > 1 ? 's' : ''}. Stand on one to change its easing.</div>}
+      <div className="hint left">
+        {keys.length
+          ? `${keys.length} keyframe${keys.length > 1 ? 's' : ''}. Move the playhead and drag a corner to add another, then pick its easing.`
+          : 'Drag the four corners on the preview. To animate it: add a keyframe, move the playhead, drag the corners again.'}
+      </div>
       {warped && (
         <button className="mini wide" onClick={() => dispatch({ type: 'warpReset', id: clip.id })} title="Remove the warp and its keyframes">Reset warp</button>
       )}
@@ -249,7 +259,6 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
             )}
 
             <MotionPanel clip={clip} playhead={state.playhead} dispatch={dispatch} mode={mode} setMode={setMode} freeMode={freeMode} setFreeMode={setFreeMode} />
-            <WarpPanel clip={clip} playhead={state.playhead} dispatch={dispatch} mode={mode} setMode={setMode} />
 
             {oclip && <div className="hint left">This clip is on an overlay track. Drag it along its track to choose when it appears; transitions only work on the main video track.</div>}
             {!oclip && <div className="insp-section">Transition</div>}

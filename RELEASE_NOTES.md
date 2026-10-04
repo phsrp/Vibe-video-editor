@@ -1,3 +1,1 @@
-- New: volume can go up to 200% (boost), on the track sliders and in the Inspector, with a Mute button there too
-- Long clips show their length as minutes and seconds (for example 52m 19s)
-- README: easing guide with pictures, and the Projects folder location
+- Funny warp now sits with the other transform buttons (Show box, Free transform, Funny warp) instead of a separate section
