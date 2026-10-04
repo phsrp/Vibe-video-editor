@@ -1,7 +1,7 @@
 // Video export, renderer side. See electron/exporter.js for the overall approach.
-import { layout, totalDuration, hasAttached, streamCount, toUrl } from './state.js'
+import { layout, overlayLayout, totalDuration, projectDuration, videoRowsBottomUp, hasAttached, streamCount, toUrl } from './state.js'
 import { createRenderer } from './glRenderer.js'
-import { evalTransform, hasTransform } from './motion.js'
+import { evalTransform, evalWarp, hasTransform } from './motion.js'
 
 export const RESOLUTIONS = { '1080p': [1920, 1080], '2K': [2560, 1440], '4K': [3840, 2160] }
 export const DEFAULT_BITRATE = { '1080p': 12, '2K': 24, '4K': 50 }
@@ -16,15 +16,18 @@ export function buildPlan(state, s) {
   const [w, h] = RESOLUTIONS[s.res]
   const fps = s.fps
   const lay = layout(state.clips)
-  if (!lay.length) throw new Error('The timeline is empty.')
+  const ovl = overlayLayout(state.overlayClips)
+  if (!lay.length && !ovl.length) throw new Error('The timeline is empty.')
   const mediaOf = (id) => state.media.find((m) => m.id === id)
-  const total = totalDuration(state.clips)
+  const mainTotal = totalDuration(state.clips)
+  const total = projectDuration(state)
 
-  for (const c of lay) {
+  for (const c of [...lay, ...ovl]) {
     const m = mediaOf(c.mediaId)
     if (!m || m.missing) throw new Error(`A source file is missing: ${m ? m.name : 'unknown'}. Reconnect it by re-importing, then try again.`)
   }
 
+  // main video, cut into pieces (a transition, a clip, or a clip with motion / warp)
   const raw = []
   lay.forEach((c, i) => {
     const next = lay[i + 1]
@@ -34,44 +37,65 @@ export function buildPlan(state, s) {
     const t0 = c.start + c.ov
     const t1 = c.start + c.dur - nextOv
     if (t1 - t0 > 1e-6) {
-      // a clip with motion (position / scale / rotation / opacity) must go through the effects renderer
+      // a clip with motion (position / scale / rotation / opacity) or warp must go through the effects renderer
       if (hasTransform(c)) raw.push({ kind: 'solo', t0, t1, clip: c, media: m, srcStart: c.in + c.ov })
-      else raw.push({ kind: 'clip', t0, t1, file: m.path, isImage: m.type === 'image', srcStart: c.in + c.ov, srcDur: t1 - t0 })
+      else raw.push({ kind: 'clip', t0, t1, clip: c, media: m, file: m.path, isImage: m.type === 'image', srcStart: c.in + c.ov, srcDur: t1 - t0 })
     }
   })
+  // nothing on the main track (before the first / after the last clip): black, with overlays on top
+  if (total - mainTotal > 1e-6) raw.push({ kind: 'none', t0: mainTotal, t1: total })
 
-  const segments = []
-  let k = 0
+  // Overlay clips start and end anywhere: cut the pieces there too. Wherever an overlay is showing, the
+  // piece is rendered with the effects renderer, with all the layers stacked.
+  const cuts = new Set()
+  for (const c of ovl) {
+    cuts.add(c.start)
+    cuts.add(c.start + c.dur)
+  }
+  const subs = []
   for (const r of raw) {
-    const frames = Math.round(r.t1 * fps) - Math.round(r.t0 * fps)
-    if (frames <= 0) continue
-    if (r.kind === 'clip') segments.push({ kind: 'clip', file: r.file, isImage: r.isImage, srcStart: r.srcStart, srcDur: r.srcDur, frames })
-    else if (r.kind === 'solo') {
-      segments.push({
-        kind: 'gl',
-        k: k++,
-        frames,
-        name: null,
-        dur: r.t1 - r.t0,
-        a: { file: r.media.path, isImage: r.media.type === 'image', start: r.srcStart, clip: r.clip },
-        b: null,
-      })
-    } else {
-      const ma = mediaOf(r.a.mediaId)
-      const mb = mediaOf(r.b.mediaId)
-      segments.push({
-        kind: 'gl',
-        k: k++,
-        frames,
-        name: r.name,
-        dur: r.t1 - r.t0,
-        a: { file: ma.path, isImage: ma.type === 'image', start: r.a.out - (r.t1 - r.t0), clip: r.a },
-        b: { file: mb.path, isImage: mb.type === 'image', start: r.b.in, clip: r.b },
-      })
+    const pts = [r.t0, ...[...cuts].filter((x) => x > r.t0 + 1e-6 && x < r.t1 - 1e-6).sort((p, q) => p - q), r.t1]
+    for (let i = 0; i < pts.length - 1; i++) {
+      const mid = (pts[i] + pts[i + 1]) / 2
+      subs.push({ r, u0: pts[i], u1: pts[i + 1], over: ovl.filter((c) => c.start <= mid && mid < c.start + c.dur) })
     }
   }
-  const totalFrames = segments.reduce((a, x) => a + x.frames, 0)
 
+  const side = (m, start, clip) => ({ file: m.path, isImage: m.type === 'image', start, clip })
+  const segments = []
+  let k = 0
+  for (const { r, u0, u1, over } of subs) {
+    const frames = Math.round(u1 * fps) - Math.round(u0 * fps)
+    if (frames <= 0) continue
+    const shift = u0 - r.t0
+    const dur = u1 - u0
+    // the main video's layer for this piece
+    let main = null
+    if (r.kind === 'trans') {
+      const ma = mediaOf(r.a.mediaId)
+      const mb = mediaOf(r.b.mediaId)
+      const span = r.t1 - r.t0
+      main = { a: side(ma, r.a.out - span + shift, r.a), b: side(mb, r.b.in + shift, r.b), name: r.name, p0: shift / span, p1: (shift + dur) / span }
+    } else if (r.kind === 'solo' || (r.kind === 'clip' && over.length)) {
+      main = { a: side(r.media, r.srcStart + shift, r.clip), b: null, name: null, p0: 0, p1: 1 }
+    }
+    if (r.kind === 'clip' && !over.length) {
+      segments.push({ kind: 'clip', file: r.file, isImage: r.isImage, srcStart: r.srcStart + shift, srcDur: dur, frames })
+      continue
+    }
+    // layers, bottom first (the order of the rows on the timeline)
+    const layers = []
+    for (const key of videoRowsBottomUp(state)) {
+      if (key === 'main') {
+        if (main) layers.push(main)
+      } else {
+        const c = over.filter((x) => x.trackId === key.slice(2)).pop()
+        if (c) layers.push({ a: side(mediaOf(c.mediaId), c.in + (u0 - c.start), c), b: null, name: null, p0: 0, p1: 1 })
+      }
+    }
+    segments.push({ kind: 'gl', k: k++, frames, dur, layers })
+  }
+  const totalFrames = segments.reduce((a, x) => a + x.frames, 0)
   // ---- audio tracks (muted tracks are left out)
   const audio = []
   for (let n = 0; n < streamCount(state); n++) {
@@ -151,40 +175,48 @@ export async function runExport({ state, settings, transitions, outPath, onProgr
         const s = trans[ti]
         const label = `Rendering effects ${ti + 1} of ${trans.length}`
         report(label)
-        const extract = (side, name) =>
-          window.api.exportExtract({ name, file: side.file, isImage: side.isImage, start: side.start, dur: s.dur, fps, w, h, maxFrames: s.frames + 2 })
-        const fa = await extract(s.a, `t${s.k}a`)
-        const fb = s.b ? await extract(s.b, `t${s.k}b`) : null
+        // every picture of every layer, as numbered images (not padded: the renderer fits them itself, like the preview)
+        const srcs = []
+        s.layers.forEach((l, li) => {
+          srcs.push({ li, which: 'a', side: l.a })
+          if (l.b) srcs.push({ li, which: 'b', side: l.b })
+        })
+        for (const x of srcs) {
+          x.info = await window.api.exportExtract({ name: `t${s.k}l${x.li}${x.which}`, file: x.side.file, isImage: x.side.isImage, start: x.side.start, dur: s.dur, fps, w, h, maxFrames: s.frames + 2, noPad: true })
+        }
         if (cancelled) throw new Error('Export cancelled')
         await window.api.exportSegBegin({ k: s.k, w, h, fps })
         const cache = new Map()
-        const load = (info, key, i) => {
-          const idx = Math.min(i, info.count - 1)
-          const ck = `${key}${info.count === 1 ? 0 : idx}`
+        const load = (x, i) => {
+          const idx = Math.min(i, x.info.count - 1)
+          const ck = `${x.li}${x.which}${x.info.count === 1 ? 0 : idx}`
           if (cache.has(ck)) return cache.get(ck)
           const img = new Image()
-          img.src = toUrl(`${info.dir}\\${pad5(idx + 1)}.png`)
+          img.src = toUrl(`${x.info.dir}\\${pad5(idx + 1)}.png`)
           const p = img.decode().then(() => img)
           cache.set(ck, p)
-          if (cache.size > 6) cache.delete(cache.keys().next().value)
+          if (cache.size > 6 + srcs.length * 2) cache.delete(cache.keys().next().value)
           return p
         }
-        let nextA = load(fa, 'a', 0)
-        let nextB = fb ? load(fb, 'b', 0) : null
+        let next = srcs.map((x) => load(x, 0))
         for (let i = 0; i < s.frames; i++) {
           if (cancelled) throw new Error('Export cancelled')
-          const [imgA, imgB] = await Promise.all([nextA, nextB])
-          if (i + 1 < s.frames) {
-            nextA = load(fa, 'a', i + 1) // load the next frames while this one renders
-            nextB = fb ? load(fb, 'b', i + 1) : null
+          const imgs = await Promise.all(next)
+          if (i + 1 < s.frames) next = srcs.map((x) => load(x, i + 1)) // load the next frames while this one renders
+          const imgOf = new Map(srcs.map((x, j) => [`${x.li}${x.which}`, imgs[j]]))
+          // each clip's motion and warp at the source time of this frame
+          const sideOf = (li, which, sd) => {
+            const ts = Math.min(sd.clip.out, sd.start + i / fps)
+            const img = imgOf.get(`${li}${which}`)
+            return { el: img, w: img.naturalWidth, h: img.naturalHeight, tf: evalTransform(sd.clip, ts), warp: evalWarp(sd.clip, ts) }
           }
-          // each clip's motion at the source time of this frame
-          const tfOf = (side) => evalTransform(side.clip, Math.min(side.clip.out, side.start + i / fps))
-          renderer.render(
-            { el: imgA, w, h, tf: tfOf(s.a) },
-            s.b ? { el: imgB, w, h, tf: tfOf(s.b) } : null,
-            s.name,
-            (i + 0.5) / s.frames
+          renderer.renderLayers(
+            s.layers.map((l, li) => ({
+              A: sideOf(li, 'a', l.a),
+              B: l.b ? sideOf(li, 'b', l.b) : null,
+              name: l.name,
+              progress: l.p0 + (l.p1 - l.p0) * ((i + 0.5) / s.frames),
+            }))
           )
           renderer.read(buf)
           await window.api.exportFrame(buf)
@@ -194,7 +226,6 @@ export async function runExport({ state, settings, transitions, outPath, onProgr
         await window.api.exportSegEnd()
       }
     }
-
     if (cancelled) throw new Error('Export cancelled')
     unsub = window.api.onExportProgress((p) => onProgress({ pct: Math.min(99.5, ((doneT * W_T + p.frame) / units) * 100), label: 'Encoding video…' }))
     onProgress({ pct: Math.min(99.5, ((doneT * W_T) / units) * 100), label: 'Encoding video…' })

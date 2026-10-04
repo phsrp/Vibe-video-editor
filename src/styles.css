@@ -83,7 +83,13 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 
 .stage { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 12px; gap: 10px; }
 .preview-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #000; border-radius: 8px; overflow: hidden; }
-.preview-canvas { max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; width: auto; height: auto; object-fit: contain; }
+.preview-box { position: relative; flex: none; }
+.preview-canvas { display: block; width: 100%; height: 100%; }
+.warp-overlay { position: absolute; inset: 0; pointer-events: none; }
+.warp-overlay svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.warp-overlay polygon { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.warp-handle { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.6); cursor: grab; pointer-events: auto; touch-action: none; }
+.warp-handle:active { cursor: grabbing; }
 .transport { display: flex; align-items: center; gap: 10px; justify-content: center; }
 .transport .play { min-width: 96px; }
 .timecode { font-variant-numeric: tabular-nums; color: var(--dim); min-width: 130px; text-align: center; }
@@ -262,3 +268,21 @@ button.big { padding: 11px 22px; font-size: 14px; border-radius: 10px; }
 .upd-new { font-weight: 700; margin: 10px 0 4px; }
 .upd-notes { margin: 0 0 10px; padding-left: 20px; max-height: 180px; overflow-y: auto; font-size: 13px; line-height: 1.5; }
 .upd-notes li { margin: 2px 0; }
+
+/* tracks: drag a row by its label, rename, overlay clips, waveforms, add-track popup */
+.tl-label .grip { color: var(--dim); display: inline-flex; cursor: grab; }
+.tl-label { cursor: grab; }
+.tl-label button, .tl-label input { cursor: pointer; }
+.tl-label .name-edit { flex: 1; min-width: 0; font: inherit; font-weight: 600; padding: 1px 4px; }
+.tl-row.row-dragging { opacity: .45; }
+.tl-row.drop-above { box-shadow: inset 0 3px 0 var(--accent2); }
+.tl-row.drop-below { box-shadow: inset 0 -3px 0 var(--accent2); }
+.clip.overlay { top: 6px; bottom: 6px; }
+.aclip .wave { position: absolute; left: 0; top: 0; width: 100%; height: 100%; color: rgba(255,255,255,.65); pointer-events: none; }
+.aclip span { position: relative; }
+.mini.wide { width: auto; padding: 3px 9px; display: inline-flex; align-items: center; gap: 5px; }
+.add-track { width: 440px; }
+.add-choices { display: flex; gap: 10px; margin-top: 12px; }
+.add-choices button { flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px; text-align: left; height: auto; white-space: normal; }
+.add-choices button span { font-size: 12px; color: var(--dim); font-weight: 400; }
+.modal-bg.top { z-index: 500; }

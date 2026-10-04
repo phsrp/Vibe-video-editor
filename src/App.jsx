@@ -124,7 +124,7 @@ export default function App() {
       const saved = (await window.api.listAutosaves()).filter((a) => {
         try {
           const d = JSON.parse(a.json)
-          return (d.clips || []).length || (d.audioClips || []).length
+          return (d.clips || []).length || (d.audioClips || []).length || (d.overlayClips || []).length
         } catch {
           return false
         }

@@ -66,29 +66,132 @@ export function evalTransform(clip, t) {
   }
 }
 
+// ---- Warp: the four corners of the picture can be pulled anywhere (corner pin), with keyframes.
+// clip.warp = { fixed: [8 numbers] | undefined, keys: [{t (source seconds), c: [8 numbers], ease}] }
+// c = [dx, dy] for the corners top-left, top-right, bottom-right, bottom-left, in % of the picture's
+// width / height (dx positive = right, dy positive = down).
+export const WARP_ZERO = [0, 0, 0, 0, 0, 0, 0, 0]
+const WARP_BASE = [[0, 1], [1, 1], [1, 0], [0, 0]] // the corners in shader space (y up)
+const isZero = (c) => !c || c.every((v) => Math.abs(v) < 1e-9)
+
+export function evalWarp(clip, t) {
+  const w = clip.warp
+  if (!w) return null
+  const keys = w.keys || []
+  if (!keys.length) return isZero(w.fixed) ? null : w.fixed
+  if (t <= keys[0].t) return keys[0].c
+  const last = keys[keys.length - 1]
+  if (t >= last.t) return last.c
+  let i = 0
+  while (i < keys.length - 2 && t >= keys[i + 1].t) i++
+  const a = keys[i]
+  const b = keys[i + 1]
+  const e = (EASES[a.ease] || EASES.linear).fn((t - a.t) / (b.t - a.t))
+  return a.c.map((v, j) => v + (b.c[j] - v) * e)
+}
+
+// Solve for the 3x3 matrix mapping 4 points onto 4 points (row-major, 9 numbers).
+function homography(src, dst) {
+  const A = []
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = src[i]
+    const [u, v] = dst[i]
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u])
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y, v])
+  }
+  for (let c = 0; c < 8; c++) {
+    let p = c
+    for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r
+    ;[A[c], A[p]] = [A[p], A[c]]
+    if (Math.abs(A[c][c]) < 1e-12) return null
+    for (let r = 0; r < 8; r++) {
+      if (r === c) continue
+      const f = A[r][c] / A[c][c]
+      for (let k = c; k < 9; k++) A[r][k] -= f * A[c][k]
+    }
+  }
+  const h = A.map((row, i) => row[8] / row[i])
+  return [...h, 1]
+}
+
+export const warpQuad = (c) => WARP_BASE.map((b, i) => [b[0] + c[i * 2] / 100, b[1] - c[i * 2 + 1] / 100])
+
+const IDENT3 = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1])
+// matrix (column-major, for WebGL) that maps a point of the warped picture back to the source picture
+function warpMatrix(c) {
+  const H = homography(warpQuad(c), WARP_BASE)
+  if (!H) return null
+  return new Float32Array([H[0], H[3], H[6], H[1], H[4], H[7], H[2], H[5], H[8]])
+}
+
 // Does the clip need the effects renderer (instead of being copied straight through)?
 export function hasTransform(clip) {
+  if (clip.warp && ((clip.warp.keys && clip.warp.keys.length) || !isZero(clip.warp.fixed))) return true
   if (clip.anim && Object.values(clip.anim).some((l) => l && l.length)) return true
   return PROPS.some((p) => clip.tf && clip.tf[p.id] != null && clip.tf[p.id] !== p.def)
 }
 
-// Sorted unique keyframe times of all properties (for the markers on the timeline).
+// Sorted unique keyframe times of all properties and the warp (for the markers on the timeline).
 export function keyTimes(clip) {
   const ts = []
-  for (const list of Object.values(clip.anim || {})) for (const k of list || []) if (!ts.some((x) => Math.abs(x - k.t) < KEY_EPS)) ts.push(k.t)
+  const add = (t) => {
+    if (!ts.some((x) => Math.abs(x - t) < KEY_EPS)) ts.push(t)
+  }
+  for (const list of Object.values(clip.anim || {})) for (const k of list || []) add(k.t)
+  for (const k of (clip.warp && clip.warp.keys) || []) add(k.t)
   return ts.sort((a, b) => a - b)
 }
 
 export const keyAt = (list, t) => (list || []).find((k) => Math.abs(k.t - t) < KEY_EPS)
 
 // tf -> the numbers the shader wants: [offsetX, offsetY, scale, rotation(rad)], [opacity, active]
-export function shaderTransform(tf) {
-  if (!tf) return { v: [0, 0, 1, 0], p: [1, 0] }
+// warp (8 numbers or null) -> h (matrix), w (active)
+export function shaderTransform(tf, warp) {
+  const wm = warp && !isZero(warp) ? warpMatrix(warp) : null
+  const h = wm || IDENT3
+  const w = wm ? 1 : 0
+  if (!tf) return { v: [0, 0, 1, 0], p: [1, 0], h, w }
   const active = tf.x !== 0 || tf.y !== 0 || tf.scale !== 100 || tf.rot !== 0
   return {
     v: [tf.x / 100, -tf.y / 100, Math.max(tf.scale, 0.01) / 100, (tf.rot * Math.PI) / 180],
     p: [Math.min(1, Math.max(0, tf.opacity / 100)), active ? 1 : 0],
+    h,
+    w,
   }
 }
 
-if (typeof window !== 'undefined') window.__motion = { evalTransform, evalProp } // used by the developer self-test
+// Mapping between the frame (uv, 0..1, y up) and the picture's own rectangle (q, 0..1), the same
+// maths as the shader, so handles drawn over the preview line up with the picture.
+// s = the letterbox scale of the picture (see glRenderer scaleFor), ratio = frame width / height.
+export function frameToRect(uv, s, tf, ratio) {
+  const st = shaderTransform(tf)
+  let cx = uv[0] - 0.5
+  let cy = uv[1] - 0.5
+  if (st.p[1] > 0.5) {
+    const [ox, oy, sc, rot] = st.v
+    cx = cx * ratio - ox * ratio
+    cy -= oy
+    const cs = Math.cos(rot)
+    const sn = Math.sin(rot)
+    ;[cx, cy] = [(cs * cx - sn * cy) / sc, (sn * cx + cs * cy) / sc]
+    cx /= ratio
+  }
+  return [cx * s[0] + 0.5, cy * s[1] + 0.5]
+}
+export function rectToFrame(q, s, tf, ratio) {
+  const st = shaderTransform(tf)
+  let cx = (q[0] - 0.5) / s[0]
+  let cy = (q[1] - 0.5) / s[1]
+  if (st.p[1] > 0.5) {
+    const [ox, oy, sc, rot] = st.v
+    const cs = Math.cos(rot)
+    const sn = Math.sin(rot)
+    cx *= ratio
+    ;[cx, cy] = [sc * (cs * cx + sn * cy), sc * (-sn * cx + cs * cy)]
+    cx = (cx + ox * ratio) / ratio
+    cy += oy
+  }
+  return [cx + 0.5, cy + 0.5]
+}
+
+if (typeof window !== 'undefined') window.__motion = { evalTransform, evalProp, evalWarp, shaderTransform, frameToRect, rectToFrame } // used by the developer self-test

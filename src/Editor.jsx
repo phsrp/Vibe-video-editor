@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { reducer, initialState, layout, totalDuration, fmtTime, toUrl } from './state.js'
+import { reducer, initialState, layout, projectDuration, fmtTime, toUrl } from './state.js'
 import Preview from './Preview.jsx'
 import Timeline from './Timeline.jsx'
 import KeybindDialog from './KeybindDialog.jsx'
@@ -37,7 +37,8 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
   const savedJson = useRef(serialize(initialState)) // what is on disk (or the empty project)
   const autosavedJson = useRef('')
   const projectName = projectPath ? projectPath.split(/[\\/]/).pop().replace(/\.json$/i, '') : 'Untitled'
-  const total = totalDuration(state.clips)
+  const total = projectDuration(state)
+  const [warpEdit, setWarpEdit] = useState(false)
 
   // Add imported files to the project, then prepare their audio streams in the background.
   const extractPending = (items) => {
@@ -112,14 +113,14 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
   // ---- saving, opening, autosave
   const rememberRecent = (file, s) => {
     const first = s.clips.map((c) => s.media.find((m) => m.id === c.mediaId)).find((m) => m && m.thumb)
-    window.api.recentAdd({ path: file, name: file.split(/[\\/]/).pop().replace(/\.json$/i, ''), thumb: first ? first.thumb : null, clips: s.clips.length, duration: totalDuration(s.clips) })
+    window.api.recentAdd({ path: file, name: file.split(/[\\/]/).pop().replace(/\.json$/i, ''), thumb: first ? first.thumb : null, clips: s.clips.length, duration: projectDuration(s) })
   }
 
   const loadFromJson = async (json, file) => {
     setBusy(true)
     try {
       const r = await restore(json)
-      dispatch({ type: 'loadProject', media: r.media, clips: r.clips, audioClips: r.audioClips, audioTracks: r.audioTracks, streamSettings: r.streamSettings })
+      dispatch({ type: 'loadProject', media: r.media, clips: r.clips, audioClips: r.audioClips, audioTracks: r.audioTracks, streamSettings: r.streamSettings, overlayClips: r.overlayClips, videoTracks: r.videoTracks, mainName: r.mainName, rowOrder: r.rowOrder })
       setProjectPath(file)
       // a project opened from a file starts "clean"; one restored from autosave still needs saving
       savedJson.current = file ? serialize(r) : serialize(initialState)
@@ -169,7 +170,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
   useEffect(() => {
     const t = setTimeout(() => setDirty(serialize(state) !== savedJson.current), 600)
     return () => clearTimeout(t)
-  }, [state.media, state.clips, state.audioClips, state.audioTracks, state.streamSettings, projectPath])
+  }, [state.media, state.clips, state.audioClips, state.audioTracks, state.streamSettings, state.overlayClips, state.videoTracks, state.mainName, state.rowOrder, projectPath])
 
   // autosave every 15 seconds: into the project file if it has one, otherwise a recovery copy
   useEffect(() => {
@@ -233,7 +234,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         <button onClick={() => saveProject(true)}>Save as…</button>
         <span className="proj-name">{projectName}{dirty ? ' •' : ''}</span>
         <span className="spacer" />
-        <button className="primary" onClick={() => setShowExport(true)} disabled={!state.clips.length}>
+        <button className="primary" onClick={() => setShowExport(true)} disabled={!state.clips.length && !state.overlayClips.length}>
           <Icon name="upload" /> Export video…
         </button>
       </header>
@@ -281,7 +282,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         </aside>
 
         <main className="stage">
-          <Preview state={state} dispatch={dispatch} transitions={transitions} onCompiled={setTrErrors} active={active} />
+          <Preview state={state} dispatch={dispatch} transitions={transitions} onCompiled={setTrErrors} active={active} warpEdit={warpEdit} />
           <div className="transport">
             <button onClick={() => dispatch({ type: 'setPlayhead', t: 0, user: true })} title="Go to start"><Icon name="skipBack" fill /></button>
             <button className="primary play" onClick={() => dispatch({ type: 'setPlaying', value: !state.playing })}>
@@ -301,6 +302,8 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
           errors={trErrors}
           onReload={loadTransitions}
           onOpenFolder={() => window.api.openTransitionsFolder()}
+          warpEdit={warpEdit}
+          setWarpEdit={setWarpEdit}
         />
       </div>
 

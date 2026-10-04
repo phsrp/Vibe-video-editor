@@ -19,6 +19,10 @@ export function serialize(state) {
     audioClips: state.audioClips,
     audioTracks: state.audioTracks,
     streamSettings: state.streamSettings,
+    overlayClips: state.overlayClips,
+    videoTracks: state.videoTracks,
+    mainName: state.mainName,
+    rowOrder: state.rowOrder,
   })
 }
 
@@ -51,6 +55,10 @@ export async function restore(json) {
     media,
     clips: remap(data.clips),
     audioClips: remap(data.audioClips || []),
+    overlayClips: remap(data.overlayClips || []),
+    videoTracks: data.videoTracks || [],
+    mainName: data.mainName || 'Video 1',
+    rowOrder: data.rowOrder || [],
     audioTracks: data.audioTracks || [],
     streamSettings: data.streamSettings || {},
     missing,

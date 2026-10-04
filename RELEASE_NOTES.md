@@ -1,2 +1,5 @@
-- The editor now checks for updates the moment it opens
-- Update popup lists what is new in each version
+- New: Warp. Drag the four corners of a video or image on the preview, with keyframes and easing
+- New: overlay video tracks (Add track > Video). Layer clips over each other and start them at any time
+- New: drag any track up or down to reorder it, and double-click a track name to rename it
+- New: waveforms on the audio lanes
+- The Add track button now asks whether you want a video or an audio track

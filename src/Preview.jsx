@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createRenderer } from './glRenderer.js'
-import { evalTransform } from './motion.js'
-import { layout, audioLayout, audioSource, totalDuration, toUrl } from './state.js'
+import { evalTransform, evalWarp } from './motion.js'
+import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl } from './state.js'
+import WarpOverlay from './WarpOverlay.jsx'
 
 // Owns the canvas, the playback clock and the <video>/<img> elements.
-export default function Preview({ state, dispatch, transitions, onCompiled, active = true }) {
+export default function Preview({ state, dispatch, transitions, onCompiled, active = true, warpEdit = false }) {
   const activeRef = useRef(active)
   activeRef.current = active
   const canvasRef = useRef(null)
@@ -140,7 +141,9 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       }
       const s = stateRef.current
       const clips = layout(s.clips)
-      const total = totalDuration(s.clips)
+      const overlays = overlayLayout(s.overlayClips)
+      const mainTotal = totalDuration(s.clips)
+      const total = projectDuration(s)
 
       // playback clock
       let t = s.playhead
@@ -162,7 +165,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
 
       // drop elements of deleted clips
       for (const [id, e] of els.current) {
-        if (!clips.some((c) => c.id === id)) {
+        if (!clips.some((c) => c.id === id) && !overlays.some((c) => c.id === id)) {
           if (e.kind === 'video') {
             e.el.pause()
             e.el.removeAttribute('src')
@@ -174,33 +177,64 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
 
       audioPass(t, s, clips)
 
-      // clips under the playhead: one normally, two during a transition
+      const mediaOf = (c) => s.media.find((m) => m.id === c.mediaId)
+      const motionAt = (c) => Math.min(c.in + (t - c.start), c.out)
+
+      // main video: one clip under the playhead normally, two during a transition
       let act = clips.filter((c) => t >= c.start && t < c.start + c.dur)
-      if (!act.length && clips.length && t >= total) act = [clips[clips.length - 1]]
+      if (!act.length && clips.length && t >= mainTotal && t >= total - 0.001) act = [clips[clips.length - 1]]
       act = act.slice(-2)
       const actIds = new Set(act.map((c) => c.id))
+      const layerFor = {}
+      if (act.length) {
+        const cA = act[0]
+        const cB = act.length > 1 ? act[1] : null
+        const mA = mediaOf(cA)
+        const mB = cB && mediaOf(cB)
+        const A = mA ? syncClip(cA, t, s.playing, mA) : null
+        const B = cB && mB ? syncClip(cB, t, s.playing, mB) : null
+        // each clip's motion (position / scale / rotation / opacity) and warp at this moment
+        if (A) {
+          A.tf = evalTransform(cA, motionAt(cA))
+          A.warp = evalWarp(cA, motionAt(cA))
+        }
+        if (B) {
+          B.tf = evalTransform(cB, motionAt(cB))
+          B.warp = evalWarp(cB, motionAt(cB))
+        }
+        if (cB && B && A) layerFor.main = { A, B, name: cB.transition && cB.transition.name, progress: (t - cB.start) / cB.ov }
+        else if (A) layerFor.main = { A }
+      }
+      // overlay tracks: the clip of each track under the playhead (the later one wins)
+      for (const tr of s.videoTracks) {
+        const hit = overlays.filter((c) => c.trackId === tr.id && t >= c.start && t < c.start + c.dur)
+        const c = hit[hit.length - 1]
+        if (!c) continue
+        actIds.add(c.id)
+        const m = mediaOf(c)
+        const A = m ? syncClip(c, t, s.playing, m) : null
+        if (!A) continue
+        A.tf = evalTransform(c, motionAt(c))
+        A.warp = evalWarp(c, motionAt(c))
+        layerFor['v:' + tr.id] = { A }
+      }
       for (const [id, e] of els.current) {
         if (e.kind === 'video' && !actIds.has(id) && !e.el.paused) e.el.pause()
       }
-      if (!act.length) return renderer.clear()
-
-      const mediaOf = (c) => s.media.find((m) => m.id === c.mediaId)
-      const cA = act[0]
-      const cB = act.length > 1 ? act[1] : null
-      const mA = mediaOf(cA)
-      const mB = cB && mediaOf(cB)
-      if (!mA) return renderer.clear()
-      const A = syncClip(cA, t, s.playing, mA)
-      const B = cB && mB ? syncClip(cB, t, s.playing, mB) : null
-      // each clip's motion (position / scale / rotation / opacity) at this moment
-      if (A) A.tf = evalTransform(cA, Math.min(cA.in + (t - cA.start), cA.out))
-      if (B) B.tf = evalTransform(cB, Math.min(cB.in + (t - cB.start), cB.out))
-      if (cB && B && A) {
-        renderer.render(A, B, cB.transition && cB.transition.name, (t - cB.start) / cB.ov)
-      } else if (A) {
-        renderer.render(A, null)
+      // overlay clips about to start: get their first frame ready
+      for (const c of overlays) {
+        if (c.start > t && c.start - t < 3) {
+          const m = mediaOf(c)
+          if (!m) continue
+          const e = getEl(c, m)
+          if (e.kind === 'video' && e.el.paused && e.el.readyState > 0 && Math.abs(e.el.currentTime - c.in) > 0.05 && !e.el.seeking) e.el.currentTime = c.in
+        }
       }
-
+      const layers = []
+      for (const key of videoRowsBottomUp(s)) if (layerFor[key]) layers.push(layerFor[key])
+      if (!layers.length) return renderer.clear()
+      renderer.renderLayers(layers)
+      if (!act.length) return
       // warm up the following clip so the cut / transition starts seamlessly
       const last = act[act.length - 1]
       const next = clips[clips.findIndex((c) => c.id === last.id) + 1]
@@ -229,9 +263,27 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
     onCompiled && onCompiled(errors)
   }, [transitions])
 
+  // the picture is always 16:9: fit it into the available space (the warp handles are drawn on top of it)
+  const wrapRef = useRef(null)
+  const [box, setBox] = useState({ w: 640, h: 360 })
+  useEffect(() => {
+    const el = wrapRef.current
+    const fit = () => {
+      const w = Math.max(1, Math.min(el.clientWidth, (el.clientHeight * 16) / 9))
+      setBox({ w, h: (w * 9) / 16 })
+    }
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   return (
-    <div className="preview-wrap">
-      <canvas ref={canvasRef} width={1280} height={720} className="preview-canvas" />
+    <div className="preview-wrap" ref={wrapRef}>
+      <div className="preview-box" style={{ width: box.w, height: box.h }}>
+        <canvas ref={canvasRef} width={1280} height={720} className="preview-canvas" />
+        {warpEdit && <WarpOverlay state={state} dispatch={dispatch} />}
+      </div>
     </div>
   )
 }

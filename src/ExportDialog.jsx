@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { totalDuration } from './state.js'
+import { projectDuration } from './state.js'
 import { RESOLUTIONS, DEFAULT_BITRATE, defaultSettings, runExport, cancelExport } from './exporter.js'
 
 const KEY = 'vibe.exportSettings'
@@ -27,7 +27,7 @@ export default function ExportDialog({ state, transitions, projectName, onClose 
   const t0 = useRef(0)
 
   const set = (patch) => setS((x) => ({ ...x, ...patch }))
-  const duration = totalDuration(state.clips)
+  const duration = projectDuration(state)
   const sizeMB = ((s.bitrate * 1000 * duration) / 8 / 1000 + (192 * duration) / 8 / 1000).toFixed(0) // Mbit/s -> MB
 
   useEffect(() => {
@@ -120,7 +120,7 @@ export default function ExportDialog({ state, transitions, projectName, onClose 
             {phase === 'error' && <div className="exp-error">Export failed:<pre>{err}</pre></div>}
             <div className="modal-foot">
               <button onClick={onClose}>Close</button>
-              <button className="primary" onClick={start} disabled={!state.clips.length}>
+              <button className="primary" onClick={start} disabled={!state.clips.length && !state.overlayClips.length}>
                 Export…
               </button>
             </div>

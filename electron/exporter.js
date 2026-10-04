@@ -146,7 +146,8 @@ function register({ ffmpegPath, getWindow }) {
   ipcMain.handle('export:extract', async (_e, o) => {
     const outDir = path.join(job.dir, o.name)
     fs.mkdirSync(outDir, { recursive: true })
-    const vf = `${fit(o.w, o.h)}`
+    // noPad: keep the picture's own shape (the renderer letterboxes it, so layers can be see-through)
+    const vf = o.noPad ? `scale=${o.w}:${o.h}:force_original_aspect_ratio=decrease,setsar=1` : `${fit(o.w, o.h)}`
     const args = ['-y', '-v', 'error']
     if (o.isImage) args.push('-i', o.file, '-vf', vf, '-frames:v', '1')
     else args.push('-ss', String(o.start), '-t', String(o.dur), '-i', o.file, '-vf', `fps=${o.fps},${vf}`, '-frames:v', String(o.maxFrames))

@@ -52,6 +52,9 @@
 - **Groups:** group any mix of video and audio clips so they move together; ungroup when you are done.
 - **Freeze frame:** save the exact frame under the playhead as an image and insert it. Drag its edge (or type seconds) to hold it as long as you like.
 - **Motion keyframes:** animate **position, scale, rotation and opacity** with seven easing styles (linear, smooth, ease in, ease out, overshoot, bounce, hold). Keyframes show as diamonds on the timeline, and you can drag them to retime.
+- **Warp:** select a clip, press **Warp on preview**, and drag its four corners to bend the picture. Add a keyframe, move the playhead, drag again and pick an easing to animate it.
+- **Overlay video tracks:** **Add track → Video** makes a layer that sits on top of the video below it. Clips there can start at any time. Drag any track by its label to move it up or down, and double-click a track name to rename it.
+- **Waveforms:** audio lanes show the loudness of each clip, so you can see where the sound starts and stops.
 
 ### Transitions
 - **18 PowerPoint-style transitions**, where the whole frame does the effect: cube, doors, curtains, page curl, peel, fall over, fracture, shred, crush, wind, vortex, ripple, spin, rotate, push, wipe, zoom and fade.

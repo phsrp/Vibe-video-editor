@@ -1,4 +1,4 @@
-import { layout } from './state.js'
+import { layout, overlayLayout, soleVideoClip } from './state.js'
 import Icon from './Icon.jsx'
 import { PROPS, EASES, evalProp, keyAt, KEY_EPS } from './motion.js'
 
@@ -77,11 +77,64 @@ function MotionPanel({ clip, playhead, dispatch }) {
     </>
   )
 }
-export default function Inspector({ state, dispatch, transitions, errors, onReload, onOpenFolder }) {
+// Warp (corner pin): drag the four corners on the preview. Keyframes work like the motion ones, but
+// one keyframe holds the whole shape.
+function WarpPanel({ clip, playhead, dispatch, warpEdit, setWarpEdit }) {
+  const ts = Math.min(clip.out, Math.max(clip.in, clip.in + (playhead - clip.start)))
+  const inside = playhead >= clip.start - 0.001 && playhead <= clip.start + clip.dur + 0.001
+  const seek = (t) => dispatch({ type: 'setPlayhead', t: clip.start + (t - clip.in), user: true })
+  const keys = (clip.warp && clip.warp.keys) || []
+  const kf = keyAt(keys, ts)
+  const prev = [...keys].reverse().find((k) => k.t < ts - KEY_EPS)
+  const next = keys.find((k) => k.t > ts + KEY_EPS)
+  const warped = !!clip.warp && (keys.length > 0 || (clip.warp.fixed || []).some((v) => v !== 0))
+  return (
+    <>
+      <div className="insp-section">Warp</div>
+      <div className="mtop">
+        <button className={'mini wide' + (warpEdit ? ' on' : '')} onClick={() => setWarpEdit(!warpEdit)} title="Show four handles on the preview and drag them to bend the picture">
+          <Icon name="diamond" size={11} /> {warpEdit ? 'Hide handles' : 'Warp on preview'}
+        </button>
+        <span className="kfctl">
+          <button className="mini" disabled={!prev} onClick={() => seek(prev.t)} title="Previous warp keyframe"><Icon name="left" size={12} /></button>
+          <button className={'mini kf-btn' + (kf ? ' on' : '')} onClick={() => dispatch({ type: 'warpToggleKey', id: clip.id, t: ts })} title={kf ? 'Remove this warp keyframe' : 'Add a warp keyframe here (keeps the current shape)'}>
+            <Icon name="diamond" size={11} fill={!!kf} />
+          </button>
+          <button className="mini" disabled={!next} onClick={() => seek(next.t)} title="Next warp keyframe"><Icon name="right" size={12} /></button>
+        </span>
+      </div>
+      {!inside && warpEdit && <div className="hint warn">Move the playhead over this clip to warp it.</div>}
+      {keys.length > 0 && (
+        <div className="mease">
+          {kf ? (
+            <select value={kf.ease} onChange={(e) => dispatch({ type: 'warpEase', id: clip.id, t: ts, ease: e.target.value })} title="How the shape changes from this keyframe to the next">
+              {Object.entries(EASES).map(([k, e]) => (
+                <option key={k} value={k}>{e.label}</option>
+              ))}
+            </select>
+          ) : (
+            <span className="hint left">{keys.length} keyframe{keys.length > 1 ? 's' : ''}. Stand on one to change its easing.</span>
+          )}
+        </div>
+      )}
+      <div className="hint left">
+        {keys.length
+          ? 'Move the playhead and drag a corner: a keyframe is added there. Then pick the easing.'
+          : 'Drag the corners on the preview. To animate it: add a keyframe, move the playhead, drag the corners again.'}
+      </div>
+      {warped && (
+        <button className="mini wide" onClick={() => dispatch({ type: 'warpReset', id: clip.id })} title="Remove the warp and its keyframes">Reset warp</button>
+      )}
+    </>
+  )
+}
+
+export default function Inspector({ state, dispatch, transitions, errors, onReload, onOpenFolder, warpEdit, setWarpEdit }) {
   const lay = layout(state.clips)
-  const only = state.selection.length === 1 ? state.selection[0] : null
+  const only = soleVideoClip(state)
   const idx = lay.findIndex((c) => c.id === only)
-  const clip = lay[idx]
+  const oclip = overlayLayout(state.overlayClips).find((c) => c.id === only)
+  const clip = lay[idx] || oclip
   const media = clip && state.media.find((m) => m.id === clip.mediaId)
   const cur = clip && clip.transition && clip.transition.name
 
@@ -97,7 +150,7 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
         {state.selection.length === 0 && (
           <div className="hint">Select a clip on the timeline to edit it or give it a transition from the previous clip. Drag a box around items to select several.</div>
         )}
-        {state.selection.length > 1 && <div className="hint">{state.selection.length} items selected. Use the timeline toolbar to Group, Ungroup or Delete them.</div>}
+        {state.selection.length > 1 && !clip && <div className="hint">{state.selection.length} items selected. Use the timeline toolbar to Group, Ungroup or Delete them.</div>}
         {state.selection.length === 1 && !clip && <div className="hint">Audio selected. Drag it to move it, drag its edges to trim it, or press Delete.</div>}
         {clip && (
           <>
@@ -114,16 +167,18 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
                   onFocus={() => dispatch({ type: 'checkpoint' })}
                   onChange={(e) => {
                     const v = parseFloat(e.target.value)
-                    if (v > 0) dispatch({ type: 'trim', id: clip.id, side: 'out', value: clip.in + v })
+                    if (v > 0) dispatch({ type: oclip ? 'trimOverlay' : 'trim', id: clip.id, side: 'out', value: clip.in + v })
                   }}
                 />
               </label>
             )}
 
             <MotionPanel clip={clip} playhead={state.playhead} dispatch={dispatch} />
+            <WarpPanel clip={clip} playhead={state.playhead} dispatch={dispatch} warpEdit={warpEdit} setWarpEdit={setWarpEdit} />
 
-            <div className="insp-section">Transition</div>
-            {idx === 0 ? (
+            {oclip && <div className="hint left">This clip is on an overlay track. Drag it along its track to choose when it appears; transitions only work on the main video track.</div>}
+            {!oclip && <div className="insp-section">Transition</div>}
+            {oclip ? null : idx === 0 ? (
               <div className="hint left">This is the first clip. A transition goes <i>between</i> two clips, so select a later clip.</div>
             ) : (
               <>

@@ -28,8 +28,14 @@ uniform vec4 tfA;
 uniform vec4 tfB;
 uniform vec2 pA;
 uniform vec2 pB;
+// Warp (corner pin): hA/hB map a point of the frame-space picture back to the source picture; wA/wB = warp active
+uniform mat3 hA;
+uniform mat3 hB;
+uniform float wA;
+uniform float wB;
 // Sources are letterboxed ("contain"). Where a source fills the frame, edges are clamped.
-vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, vec2 uv) {
+// Result is premultiplied: transparent outside the picture, so layers can be stacked.
+vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, mat3 h, float w, vec2 uv) {
   vec2 c = uv - 0.5;
   if (p.y > 0.5) {
     // inverse of: scale, rotate (clockwise), then move
@@ -41,16 +47,25 @@ vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, vec2 uv) {
     c.x /= ratio;
   }
   vec2 q = c * s + 0.5;
-  if (p.y > 0.5) {
-    if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) return vec4(0.0, 0.0, 0.0, 1.0);
-  } else {
-    if (s.x > 1.0001 && (q.x < 0.0 || q.x > 1.0)) return vec4(0.0, 0.0, 0.0, 1.0);
-    if (s.y > 1.0001 && (q.y < 0.0 || q.y > 1.0)) return vec4(0.0, 0.0, 0.0, 1.0);
+  if (w > 0.5) {
+    vec3 hv = h * vec3(q, 1.0);
+    if (hv.z < 0.0001) return vec4(0.0);
+    q = hv.xy / hv.z;
+    if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) return vec4(0.0);
+    vec4 tx = texture2D(t, q);
+    return vec4(tx.rgb * tx.a * p.x, tx.a * p.x);
   }
-  return vec4(texture2D(t, clamp(q, 0.0, 1.0)).rgb * p.x, 1.0);
+  if (p.y > 0.5) {
+    if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) return vec4(0.0);
+  } else {
+    if (s.x > 1.0001 && (q.x < 0.0 || q.x > 1.0)) return vec4(0.0);
+    if (s.y > 1.0001 && (q.y < 0.0 || q.y > 1.0)) return vec4(0.0);
+  }
+  vec4 tx = texture2D(t, clamp(q, 0.0, 1.0));
+  return vec4(tx.rgb * tx.a * p.x, tx.a * p.x);
 }
-vec4 getFromColor(vec2 uv) { return sampleSrc(from, sA, tfA, pA, uv); }
-vec4 getToColor(vec2 uv) { return sampleSrc(to, sB, tfB, pB, uv); }
+vec4 getFromColor(vec2 uv) { return sampleSrc(from, sA, tfA, pA, hA, wA, uv); }
+vec4 getToColor(vec2 uv) { return sampleSrc(to, sB, tfB, pB, hB, wB, uv); }
 `
 const SINGLE = `vec4 transition(vec2 uv) { return getFromColor(uv); }`
 const FADE = `vec4 transition(vec2 uv) { return mix(getFromColor(uv), getToColor(uv), progress); }`
@@ -114,7 +129,7 @@ export function createRenderer(canvas) {
     return {
       prog,
       extras,
-      loc: { from: u('from'), to: u('to'), progress: u('progress'), ratio: u('ratio'), sA: u('sA'), sB: u('sB'), tfA: u('tfA'), tfB: u('tfB'), pA: u('pA'), pB: u('pB') },
+      loc: { from: u('from'), to: u('to'), progress: u('progress'), ratio: u('ratio'), sA: u('sA'), sB: u('sB'), tfA: u('tfA'), tfB: u('tfB'), pA: u('pA'), pB: u('pB'), hA: u('hA'), hB: u('hB'), wA: u('wA'), wB: u('wB') },
     }
   }
 
@@ -148,6 +163,10 @@ export function createRenderer(canvas) {
     gl.uniform4f(p.loc.tfB, ...tB.v)
     gl.uniform2f(p.loc.pA, ...tA.p)
     gl.uniform2f(p.loc.pB, ...tB.p)
+    gl.uniformMatrix3fv(p.loc.hA, false, tA.h)
+    gl.uniformMatrix3fv(p.loc.hB, false, tB.h)
+    gl.uniform1f(p.loc.wA, tA.w)
+    gl.uniform1f(p.loc.wB, tB.w)
     for (const e of p.extras) {
       const v = e.value
       if (e.loc == null || !v.length) continue
@@ -175,9 +194,9 @@ export function createRenderer(canvas) {
     gl.clear(gl.COLOR_BUFFER_BIT)
   }
 
-  // A, B: {el, w, h, tf}. tf = the clip's motion at this moment (see motion.js). B and name are optional.
-  function render(A, B, name, progress) {
-    clear()
+  // Draw one layer on top of what is already there. A, B: {el, w, h, tf, warp}. tf / warp = the clip's
+  // motion at this moment (see motion.js). B and name are optional.
+  function drawLayer(A, B, name, progress) {
     if (!A) return
     try {
       upload(0, texA, A.el)
@@ -186,14 +205,25 @@ export function createRenderer(canvas) {
       return
     }
     const sA = scaleFor(A.w, A.h)
-    const tA = shaderTransform(A.tf)
+    const tA = shaderTransform(A.tf, A.warp)
+    gl.enable(gl.BLEND)
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
     if (B) {
       const p = lib.get(name) || fade
-      use(p, Math.min(1, Math.max(0, progress)), sA, scaleFor(B.w, B.h), tA, shaderTransform(B.tf))
+      use(p, Math.min(1, Math.max(0, progress)), sA, scaleFor(B.w, B.h), tA, shaderTransform(B.tf, B.warp))
     } else {
       use(single, 0, sA, sA, tA, tA)
     }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+  }
+  function render(A, B, name, progress) {
+    clear()
+    drawLayer(A, B, name, progress)
+  }
+  // layers: bottom to top, each {A, B?, name?, progress?}
+  function renderLayers(layers) {
+    clear()
+    for (const l of layers) drawLayer(l.A, l.B, l.name, l.progress)
   }
 
   // Copy the current frame (RGBA, bottom row first) into buf: used when exporting.
@@ -202,5 +232,5 @@ export function createRenderer(canvas) {
     gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, buf)
   }
 
-  return { render, clear, read, addTransition, has: (n) => lib.has(n) }
+  return { render, renderLayers, clear, read, addTransition, has: (n) => lib.has(n) }
 }

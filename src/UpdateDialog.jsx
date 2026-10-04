@@ -3,7 +3,7 @@ import Icon from './Icon.jsx'
 // Pops up when a new version exists. Nothing is downloaded until the user clicks Download.
 export default function UpdateDialog({ update, onDownload, onLater, onHide, onInstall }) {
   return (
-    <div className="modal-bg">
+    <div className="modal-bg top">
       <div className="modal update-modal">
         {update.state === 'available' && (
           <>

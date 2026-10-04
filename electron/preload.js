@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('update:status', h)
     return () => ipcRenderer.removeListener('update:status', h)
   },
+  audioPeaks: (file) => ipcRenderer.invoke('media:peaks', file),
   extractAudio: (file, id, streams) => ipcRenderer.invoke('media:extractAudio', { file, id, streams }),
   freezeFrame: (file, time, label) => ipcRenderer.invoke('media:freeze', { file, time, label }),
   listTransitions: () => ipcRenderer.invoke('transitions:list'),

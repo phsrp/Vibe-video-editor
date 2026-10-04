@@ -1,4 +1,4 @@
-import { evalTransform, evalProp, hasTransform, keyAt, DEFAULTS, DEFAULT_EASE, KEY_EPS } from './motion.js'
+import { evalTransform, evalProp, evalWarp, hasTransform, keyAt, DEFAULTS, DEFAULT_EASE, KEY_EPS, WARP_ZERO } from './motion.js'
 
 export const uid = () => Math.random().toString(36).slice(2, 9)
 export const MIN_CLIP = 0.1
@@ -14,7 +14,16 @@ export const initialState = {
   // video; origin = id of the video clip it was detached from (lets it be grouped back).
   audioClips: [],
   audioTracks: [], // {id, name, kind:'free', volume, mute}
-  streamSettings: {}, // volume/mute for the attached audio streams: {[n]: {volume, mute}}
+  streamSettings: {}, // volume/mute/name for the attached audio streams: {[n]: {volume, mute, name}}
+  // Overlay video: extra video tracks whose clips sit on top of the main video and can start at any
+  // time: {id, mediaId, trackId, in, out, start, groupId, tf, anim, warp}. A video clip's own audio
+  // is added as grouped detached audio clips when it is dropped there.
+  videoTracks: [], // {id, name}
+  overlayClips: [],
+  mainName: 'Video 1', // name shown on the main video track
+  // Vertical order of every row of the timeline (top to bottom): 'main', 'v:<trackId>', 's:<stream>', 'a:<trackId>'.
+  // Rows that are not listed yet are placed by rowKeys(). Video rows higher up are drawn on top.
+  rowOrder: [],
   past: [],
   future: [],
   // Selected items: video clip ids, audio clip ids, or 'sa:<videoClipId>:<stream>' for one attached audio stream.
@@ -50,6 +59,38 @@ export function totalDuration(clips) {
 }
 
 export const audioLayout = (audioClips) => audioClips.map((a) => ({ ...a, dur: a.out - a.in }))
+export const overlayLayout = (overlayClips) => overlayClips.map((c) => ({ ...c, dur: c.out - c.in, ov: 0 }))
+
+// Length of the whole project: the main video, or an overlay clip that runs past it.
+export function projectDuration(state) {
+  let end = totalDuration(state.clips)
+  for (const c of state.overlayClips || []) end = Math.max(end, c.start + (c.out - c.in))
+  return end
+}
+
+// Every row of the timeline, top to bottom. Remembers the user's order; new rows go to the top
+// (overlay video, so it sits above the main video) or the bottom (audio).
+export function rowKeys(state) {
+  const have = ['main', ...Array.from({ length: streamCount(state) }, (_, n) => 's:' + n), ...(state.videoTracks || []).map((t) => 'v:' + t.id), ...state.audioTracks.map((t) => 'a:' + t.id)]
+  const order = (state.rowOrder || []).filter((k) => have.includes(k))
+  const out = [...order]
+  for (const k of have) {
+    if (out.includes(k)) continue
+    if (k.startsWith('v:')) out.unshift(k)
+    else out.push(k)
+  }
+  return out
+}
+// The one video clip (main or overlay) that is selected, if there is exactly one. Its grouped audio may
+// be selected along with it: that still counts as "one clip" for the Inspector and the warp handles.
+export function soleVideoClip(state) {
+  const v = state.selection.filter((id) => state.clips.some((c) => c.id === id) || state.overlayClips.some((c) => c.id === id))
+  const others = state.selection.filter((id) => !v.includes(id) && !state.audioClips.some((c) => c.id === id))
+  return v.length === 1 && !others.length ? v[0] : null
+}
+
+// the video rows, bottom layer first (what gets drawn first)
+export const videoRowsBottomUp = (state) => rowKeys(state).filter((k) => k === 'main' || k.startsWith('v:')).reverse()
 
 // The file to play for an audio clip (a detached video stream, or a plain audio file).
 export function audioSource(a, media) {
@@ -73,26 +114,48 @@ export function streamCount(state) {
   return n
 }
 
-const snap = (s) => ({ clips: s.clips, audioClips: s.audioClips })
+const snap = (s) => ({ clips: s.clips, audioClips: s.audioClips, overlayClips: s.overlayClips })
 const hist = (s) => [...s.past, snap(s)].slice(-100)
 function commit(state, patch) {
   return { ...state, ...patch, past: hist(state), future: [] }
 }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 
-// After undo/redo, make sure every audio clip still has a track to live on.
+// After undo/redo, make sure every audio / overlay clip still has a track to live on.
 function ensureTracks(state) {
+  let out = state
   const tracks = [...state.audioTracks]
   for (const c of state.audioClips) {
     if (tracks.some((t) => t.id === c.trackId)) continue
     const name = c.trackId.startsWith('ug') ? `Video audio ${+c.trackId.slice(2) + 1} (detached)` : 'Audio'
     tracks.push({ id: c.trackId, name, kind: 'free', volume: 1, mute: false })
   }
-  return tracks.length === state.audioTracks.length ? state : { ...state, audioTracks: tracks }
+  if (tracks.length !== state.audioTracks.length) out = { ...out, audioTracks: tracks }
+  const vt = [...state.videoTracks]
+  for (const c of state.overlayClips) if (!vt.some((t) => t.id === c.trackId)) vt.push({ id: c.trackId, name: nextVideoName(vt) })
+  if (vt.length !== state.videoTracks.length) out = { ...out, videoTracks: vt }
+  return out
 }
 
-// ---- groups: every item (video clip or audio clip) may carry a groupId
-const itemOf = (state, id) => state.clips.find((x) => x.id === id) || state.audioClips.find((x) => x.id === id)
+// "Video 2", "Video 3"...: the first number not used yet ("Video 1" is the main track)
+function nextVideoName(tracks, mainName = 'Video 1') {
+  const used = new Set([mainName, ...tracks.map((t) => t.name)])
+  let n = 2
+  while (used.has(`Video ${n}`)) n++
+  return `Video ${n}`
+}
+const nextAudioName = (tracks) => {
+  const used = new Set(tracks.map((t) => t.name))
+  let n = 1
+  while (used.has(`Audio ${n}`)) n++
+  return `Audio ${n}`
+}
+
+// apply f to the video clip or overlay clip with this id
+const mapClips = (state, f) => ({ clips: state.clips.map(f), overlayClips: state.overlayClips.map(f) })
+
+// ---- groups: every item (video clip, overlay clip or audio clip) may carry a groupId
+const itemOf = (state, id) => state.clips.find((x) => x.id === id) || state.overlayClips.find((x) => x.id === id) || state.audioClips.find((x) => x.id === id)
 
 // Clicking any member of a group selects the whole group. (Attached-audio ids are never expanded.)
 function expand(state, ids) {
@@ -104,11 +167,12 @@ function expand(state, ids) {
   if (!gids.size) return ids
   const out = new Set(ids)
   state.clips.forEach((c) => gids.has(c.groupId) && out.add(c.id))
+  state.overlayClips.forEach((c) => gids.has(c.groupId) && out.add(c.id))
   state.audioClips.forEach((c) => gids.has(c.groupId) && out.add(c.id))
   return [...out]
 }
 
-const newClip = (c, patch) => ({ id: c.id, mediaId: c.mediaId, in: c.in, out: c.out, transition: c.transition || null, noAudio: c.noAudio || [], groupId: c.groupId, tf: c.tf, anim: c.anim, ...patch })
+const newClip = (c, patch) => ({ id: c.id, mediaId: c.mediaId, in: c.in, out: c.out, transition: c.transition || null, noAudio: c.noAudio || [], groupId: c.groupId, tf: c.tf, anim: c.anim, warp: c.warp, ...patch })
 
 const sortKeys = (list) => [...list].sort((a, b) => a.t - b.t)
 
@@ -128,6 +192,10 @@ export function reducer(state, a) {
         audioClips: a.audioClips || [],
         audioTracks: a.audioTracks || [],
         streamSettings: a.streamSettings || {},
+        overlayClips: a.overlayClips || [],
+        videoTracks: a.videoTracks || [],
+        mainName: a.mainName || 'Video 1',
+        rowOrder: a.rowOrder || [],
       }
 
     case 'updateMedia':
@@ -180,6 +248,29 @@ export function reducer(state, a) {
     }
 
     case 'split': {
+      // a selected overlay clip under the playhead is split instead of the main video (its grouped audio too)
+      const ol = overlayLayout(state.overlayClips).find((x) => state.selection.includes(x.id) && a.t > x.start + MIN_CLIP && a.t < x.start + x.dur - MIN_CLIP)
+      if (ol) {
+        const cut = ol.in + (a.t - ol.start)
+        const left = { ...ol, out: cut }
+        const rightId = uid()
+        const gid = ol.groupId ? uid() : undefined
+        const right = { ...ol, id: rightId, in: cut, start: a.t, groupId: gid }
+        delete left.dur
+        delete left.ov
+        delete right.dur
+        delete right.ov
+        const overlayClips = state.overlayClips.flatMap((x) => (x.id === ol.id ? [left, right] : [x]))
+        let audioClips = state.audioClips
+        if (ol.groupId) {
+          audioClips = state.audioClips.flatMap((x) => {
+            if (x.groupId !== ol.groupId || !(a.t > x.start + MIN_CLIP && a.t < x.start + (x.out - x.in) - MIN_CLIP)) return [x]
+            const c2 = x.in + (a.t - x.start)
+            return [{ ...x, out: c2 }, { ...x, id: uid(), in: c2, start: a.t, groupId: gid }]
+          })
+        }
+        return { ...commit(state, { overlayClips, audioClips }), selection: [rightId] }
+      }
       const l = layout(state.clips)
       const c = l.find((x) => a.t > x.start + MIN_CLIP && a.t < x.start + x.dur - MIN_CLIP)
       if (!c) return state
@@ -198,7 +289,12 @@ export function reducer(state, a) {
       const hit = l.filter((x) => a.t >= x.start && a.t < x.start + x.dur)
       const c = hit.length ? hit[hit.length - 1] : l[l.length - 1]
       // the frozen picture keeps the look the clip had at that moment
-      if (c && hasTransform(c)) fc.tf = evalTransform(c, Math.min(c.in + (a.t - c.start), c.out))
+      if (c && hasTransform(c)) {
+        const ts = Math.min(c.in + (a.t - c.start), c.out)
+        fc.tf = evalTransform(c, ts)
+        const wp = evalWarp(c, ts)
+        if (wp) fc.warp = { fixed: wp, keys: [] }
+      }
       let clips
       if (!c) clips = [fc]
       else {
@@ -232,14 +328,15 @@ export function reducer(state, a) {
         .filter((c) => !sel.has(c.id))
         .map((c) => (gone.has(c.id) ? { ...c, noAudio: [...new Set([...(c.noAudio || []), ...gone.get(c.id)])] } : c))
       const audioClips = state.audioClips.filter((c) => !sel.has(c.id))
-      return { ...commit(state, { clips, audioClips }), selection: [] }
+      const overlayClips = state.overlayClips.filter((c) => !sel.has(c.id))
+      return { ...commit(state, { clips, audioClips, overlayClips }), selection: [] }
     }
 
-    // ---- keyframes (t = source time in seconds; see motion.js)
+    // ---- keyframes (t = source time in seconds; see motion.js). They work on main and overlay clips.
     // Change a property at time t. With no keyframes it changes the fixed value; with keyframes it
     // edits the keyframe at t, or adds one there. Live: call 'checkpoint' first.
     case 'setProp': {
-      const clips = state.clips.map((c) => {
+      const f = (c) => {
         if (c.id !== a.id) return c
         const list = (c.anim && c.anim[a.prop]) || []
         if (!list.length) return { ...c, tf: { ...DEFAULTS, ...c.tf, [a.prop]: a.value } }
@@ -248,13 +345,13 @@ export function reducer(state, a) {
           ? list.map((k) => (k === hit ? { ...k, v: a.value } : k))
           : sortKeys([...list, { t: a.t, v: a.value, ease: DEFAULT_EASE }])
         return { ...c, anim: { ...c.anim, [a.prop]: next } }
-      })
-      return { ...state, clips }
+      }
+      return { ...state, ...mapClips(state, f) }
     }
 
     // add a keyframe at t (with the value the property has there), or remove the one that is there
     case 'toggleKey': {
-      const clips = state.clips.map((c) => {
+      const f = (c) => {
         if (c.id !== a.id) return c
         const list = (c.anim && c.anim[a.prop]) || []
         const hit = keyAt(list, a.t)
@@ -268,45 +365,99 @@ export function reducer(state, a) {
         }
         const v = evalProp(c, a.prop, a.t)
         return { ...c, anim: { ...c.anim, [a.prop]: sortKeys([...list, { t: a.t, v, ease: DEFAULT_EASE }]) } }
-      })
-      return commit(state, { clips })
+      }
+      return commit(state, mapClips(state, f))
     }
 
     case 'setEase': {
-      const clips = state.clips.map((c) => {
+      const f = (c) => {
         if (c.id !== a.id) return c
         const list = (c.anim && c.anim[a.prop]) || []
         const hit = keyAt(list, a.t)
         if (!hit) return c
         return { ...c, anim: { ...c.anim, [a.prop]: list.map((k) => (k === hit ? { ...k, ease: a.ease } : k)) } }
-      })
-      return commit(state, { clips })
+      }
+      return commit(state, mapClips(state, f))
     }
 
     // remove all keyframes of a property and put it back to its default
     case 'clearProp': {
-      const clips = state.clips.map((c) => {
+      const f = (c) => {
         if (c.id !== a.id) return c
         const anim = { ...c.anim }
         delete anim[a.prop]
         return { ...c, anim, tf: { ...DEFAULTS, ...c.tf, [a.prop]: DEFAULTS[a.prop] } }
-      })
-      return commit(state, { clips })
+      }
+      return commit(state, mapClips(state, f))
+    }
+
+    // ---- warp (corner pin). a.c = the 8 corner numbers (see motion.js). Live: call 'checkpoint' first.
+    // With no keyframes it sets the fixed warp; with keyframes it edits the one at t or adds one there.
+    case 'warpSet': {
+      const f = (c) => {
+        if (c.id !== a.id) return c
+        const w = c.warp || { keys: [] }
+        const keys = w.keys || []
+        if (!keys.length) return { ...c, warp: { ...w, fixed: a.c, keys: [] } }
+        const hit = keyAt(keys, a.t)
+        const next = hit ? keys.map((k) => (k === hit ? { ...k, c: a.c } : k)) : sortKeys([...keys, { t: a.t, c: a.c, ease: DEFAULT_EASE }])
+        return { ...c, warp: { ...w, keys: next } }
+      }
+      return { ...state, ...mapClips(state, f) }
+    }
+    // add a warp keyframe here (keeping the current shape), or remove the one that is here
+    case 'warpToggleKey': {
+      const f = (c) => {
+        if (c.id !== a.id) return c
+        const w = c.warp || { keys: [] }
+        const keys = w.keys || []
+        const hit = keyAt(keys, a.t)
+        if (hit) {
+          const rest = keys.filter((k) => k !== hit)
+          return { ...c, warp: { fixed: rest.length ? w.fixed : hit.c, keys: rest } }
+        }
+        const cur = evalWarp(c, a.t) || WARP_ZERO
+        return { ...c, warp: { ...w, keys: sortKeys([...keys, { t: a.t, c: cur, ease: DEFAULT_EASE }]) } }
+      }
+      return commit(state, mapClips(state, f))
+    }
+    case 'warpEase': {
+      const f = (c) => {
+        if (c.id !== a.id || !c.warp) return c
+        const hit = keyAt(c.warp.keys, a.t)
+        if (!hit) return c
+        return { ...c, warp: { ...c.warp, keys: c.warp.keys.map((k) => (k === hit ? { ...k, ease: a.ease } : k)) } }
+      }
+      return commit(state, mapClips(state, f))
+    }
+    case 'warpReset': {
+      const f = (c) => {
+        if (c.id !== a.id) return c
+        const { warp, ...rest } = c
+        return rest
+      }
+      return commit(state, mapClips(state, f))
     }
 
     // live: retime all keyframes sitting at time `from` to time `to` (call 'checkpoint' first)
     case 'moveKeyframes': {
-      const clips = state.clips.map((c) => {
-        if (c.id !== a.id || !c.anim) return c
-        const anim = {}
-        for (const [p, list] of Object.entries(c.anim)) {
-          anim[p] = sortKeys((list || []).map((k) => (Math.abs(k.t - a.from) < KEY_EPS ? { ...k, t: a.to } : k)))
+      const f = (c) => {
+        if (c.id !== a.id) return c
+        let out = c
+        if (c.anim) {
+          const anim = {}
+          for (const [p, list] of Object.entries(c.anim)) {
+            anim[p] = sortKeys((list || []).map((k) => (Math.abs(k.t - a.from) < KEY_EPS ? { ...k, t: a.to } : k)))
+          }
+          out = { ...out, anim }
         }
-        return { ...c, anim }
-      })
-      return { ...state, clips }
-    }
-    case 'setTransition': {
+        if (c.warp && c.warp.keys && c.warp.keys.length) {
+          out = { ...out, warp: { ...c.warp, keys: sortKeys(c.warp.keys.map((k) => (Math.abs(k.t - a.from) < KEY_EPS ? { ...k, t: a.to } : k))) } }
+        }
+        return out
+      }
+      return { ...state, ...mapClips(state, f) }
+    }    case 'setTransition': {
       const clips = state.clips.map((c) => (c.id === a.id ? { ...c, transition: a.transition } : c))
       return commit(state, { clips })
     }
@@ -350,21 +501,24 @@ export function reducer(state, a) {
         return { ...c, noAudio: keep }
       })
 
-      const members = [...sel].filter((id) => clips.some((c) => c.id === id) || audioClips.some((x) => x.id === id))
-      const gids = new Set(members.map((id) => (clips.find((c) => c.id === id) || audioClips.find((x) => x.id === id)).groupId))
+      let overlayClips = state.overlayClips
+      const memberOf = (id) => clips.find((c) => c.id === id) || overlayClips.find((c) => c.id === id) || audioClips.find((x) => x.id === id)
+      const members = [...sel].filter((id) => memberOf(id))
+      const gids = new Set(members.map((id) => memberOf(id).groupId))
       const alreadyOne = gids.size === 1 && !gids.has(undefined)
       let selection = members
       if (members.length >= 2 && !alreadyOne) {
         const gid = uid()
         const mset = new Set(members)
         clips = clips.map((c) => (mset.has(c.id) ? { ...c, groupId: gid } : c))
+        overlayClips = overlayClips.map((c) => (mset.has(c.id) ? { ...c, groupId: gid } : c))
         audioClips = audioClips.map((x) => (mset.has(x.id) ? { ...x, groupId: gid } : x))
         changed = true
       }
       if (!changed) return state
       // drop detached-audio tracks that ended up empty
       const audioTracks = state.audioTracks.filter((t) => !t.id.startsWith('ug') || audioClips.some((x) => x.trackId === t.id))
-      return { ...commit(state, { clips, audioClips }), audioTracks, selection }
+      return { ...commit(state, { clips, audioClips, overlayClips }), audioTracks, selection }
     }
 
     // Ungroup:
@@ -381,7 +535,8 @@ export function reducer(state, a) {
       if (gids.size) {
         const clips = state.clips.map((c) => (gids.has(c.groupId) ? { ...c, groupId: undefined } : c))
         const audioClips = state.audioClips.map((x) => (gids.has(x.groupId) ? { ...x, groupId: undefined } : x))
-        return commit(state, { clips, audioClips })
+        const overlayClips = state.overlayClips.map((c) => (gids.has(c.groupId) ? { ...c, groupId: undefined } : c))
+        return commit(state, { clips, audioClips, overlayClips })
       }
 
       const lay = layout(state.clips)
@@ -408,10 +563,110 @@ export function reducer(state, a) {
       return { ...commit(state, { clips, audioClips: [...state.audioClips, ...added] }), audioTracks: tracks, selection: added.map((x) => x.id) }
     }
 
+    // ---- overlay video tracks & clips
+    case 'addVideoTrack': {
+      const keys = rowKeys(state)
+      return {
+        ...state,
+        videoTracks: [...state.videoTracks, { id: a.id, name: nextVideoName(state.videoTracks, state.mainName) }],
+        rowOrder: ['v:' + a.id, ...keys],
+      }
+    }
+    case 'removeVideoTrack': {
+      if (!state.videoTracks.some((x) => x.id === a.id)) return state
+      const gone = new Set(state.overlayClips.filter((c) => c.trackId === a.id).map((c) => c.id))
+      return {
+        ...commit(state, { overlayClips: state.overlayClips.filter((c) => c.trackId !== a.id), audioClips: state.audioClips.filter((c) => !gone.has(c.origin)) }),
+        videoTracks: state.videoTracks.filter((x) => x.id !== a.id),
+        selection: [],
+      }
+    }
+    // rename any row: key = 'main' | 'v:<id>' | 's:<n>' | 'a:<id>'
+    case 'renameRow': {
+      const name = String(a.name || '').trim().slice(0, 40)
+      if (!name) return state
+      if (a.key === 'main') return { ...state, mainName: name }
+      if (a.key.startsWith('v:')) return { ...state, videoTracks: state.videoTracks.map((t) => (t.id === a.key.slice(2) ? { ...t, name } : t)) }
+      if (a.key.startsWith('a:')) return { ...state, audioTracks: state.audioTracks.map((t) => (t.id === a.key.slice(2) ? { ...t, name } : t)) }
+      if (a.key.startsWith('s:')) {
+        const n = +a.key.slice(2)
+        return { ...state, streamSettings: { ...state.streamSettings, [n]: { volume: 1, mute: false, ...state.streamSettings[n], name } } }
+      }
+      return state
+    }
+    // drag a row to a new place: toIndex counts in the list of rows with this one taken out
+    case 'moveRow': {
+      const keys = rowKeys(state)
+      if (!keys.includes(a.key)) return state
+      const rest = keys.filter((k) => k !== a.key)
+      const idx = clamp(a.toIndex, 0, rest.length)
+      const next = [...rest.slice(0, idx), a.key, ...rest.slice(idx)]
+      if (next.every((k, i) => k === keys[i])) return state
+      return { ...state, rowOrder: next }
+    }
+
+    // drop media on an overlay track (the first one, or a new one, if trackId is missing)
+    case 'addOverlayClip': {
+      const m = state.media.find((x) => x.id === a.mediaId)
+      if (!m || m.type === 'audio') return state
+      let videoTracks = state.videoTracks
+      let rowOrder = state.rowOrder
+      let trackId = a.trackId
+      if (!trackId) {
+        if (videoTracks.length) trackId = videoTracks[0].id
+        else {
+          trackId = a.newTrackId || uid()
+          rowOrder = ['v:' + trackId, ...rowKeys(state)]
+          videoTracks = [...videoTracks, { id: trackId, name: nextVideoName(videoTracks, state.mainName) }]
+        }
+      }
+      const gid = m.type === 'video' && (m.audioStreams || []).length ? uid() : undefined
+      const clip = { id: uid(), mediaId: m.id, trackId, in: 0, out: m.duration || 3, start: Math.max(0, a.start || 0), groupId: gid }
+      if (m.type === 'image') clip.out = 3
+      // the video's own sound goes to detached audio clips grouped with it
+      const tracks = [...state.audioTracks]
+      const added = []
+      if (gid) {
+        for (let n = 0; n < m.audioStreams.length; n++) {
+          const tid = 'ug' + n
+          if (!tracks.some((t) => t.id === tid)) tracks.push({ id: tid, name: `Video audio ${n + 1} (detached)`, kind: 'free', volume: 1, mute: false })
+          added.push({ id: uid(), mediaId: m.id, stream: n, trackId: tid, in: 0, out: clip.out, start: clip.start, origin: clip.id, groupId: gid })
+        }
+      }
+      return {
+        ...commit(state, { overlayClips: [...state.overlayClips, clip], audioClips: [...state.audioClips, ...added] }),
+        videoTracks,
+        rowOrder,
+        audioTracks: tracks,
+        selection: [clip.id, ...added.map((x) => x.id)],
+      }
+    }
+
+    // live drag of overlay and audio clips (call 'checkpoint' first); moves = [{id, start, trackId?}]
+    case 'moveItems': {
+      const to = new Map(a.moves.map((m) => [m.id, m]))
+      return {
+        ...state,
+        overlayClips: state.overlayClips.map((c) => (to.has(c.id) ? { ...c, start: Math.max(0, to.get(c.id).start), trackId: to.get(c.id).trackId || c.trackId } : c)),
+        audioClips: state.audioClips.map((c) => (to.has(c.id) ? { ...c, start: Math.max(0, to.get(c.id).start) } : c)),
+      }
+    }
+    // live trim of an overlay clip; value = new absolute in/out (source seconds)
+    case 'trimOverlay': {
+      const overlayClips = state.overlayClips.map((c) => {
+        if (c.id !== a.id) return c
+        const m = state.media.find((x) => x.id === c.mediaId)
+        const maxOut = m && m.type === 'video' ? m.duration : 3600
+        if (a.side === 'out') return { ...c, out: clamp(a.value, c.in + MIN_CLIP, maxOut) }
+        const nin = clamp(a.value, 0, c.out - MIN_CLIP)
+        return { ...c, in: nin, start: Math.max(0, c.start + (nin - c.in)) }
+      })
+      return { ...state, overlayClips }
+    }
+
     // ---- audio tracks & clips
     case 'addAudioTrack': {
-      const n = state.audioTracks.filter((t) => !t.id.startsWith('ug')).length + 1
-      return { ...state, audioTracks: [...state.audioTracks, { id: a.id, name: `Audio ${n}`, kind: 'free', volume: 1, mute: false }] }
+      return { ...state, audioTracks: [...state.audioTracks, { id: a.id, name: nextAudioName(state.audioTracks), kind: 'free', volume: 1, mute: false }] }
     }
     case 'removeAudioTrack': {
       if (!state.audioTracks.some((x) => x.id === a.id)) return state

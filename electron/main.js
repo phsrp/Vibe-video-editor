@@ -92,6 +92,39 @@ function extractAudioFiles(file, id, streams) {
   return job
 }
 
+// Waveform: loudness of an audio file, 50 values per second (0-255), for drawing on the timeline
+const peaksCache = new Map()
+ipcMain.handle('media:peaks', (_e, file) => {
+  if (peaksCache.has(file)) return peaksCache.get(file)
+  const p = new Promise((resolve) => {
+    const RATE = 4000
+    const PER = RATE / 50
+    const { spawn } = require('child_process')
+    const proc = spawn(ffmpegPath, ['-v', 'error', '-i', file, '-vn', '-ac', '1', '-ar', String(RATE), '-f', 's16le', '-'], { windowsHide: true })
+    const out = []
+    let carry = Buffer.alloc(0)
+    let peak = 0
+    let n = 0
+    proc.stdout.on('data', (chunk) => {
+      const buf = carry.length ? Buffer.concat([carry, chunk]) : chunk
+      const usable = buf.length - (buf.length % 2)
+      for (let i = 0; i < usable; i += 2) {
+        const v = Math.abs(buf.readInt16LE(i))
+        if (v > peak) peak = v
+        if (++n === PER) {
+          out.push(Math.min(255, Math.round(Math.sqrt(peak / 32768) * 255)))
+          peak = 0
+          n = 0
+        }
+      }
+      carry = buf.subarray(usable)
+    })
+    proc.on('error', () => resolve(new Uint8Array(0)))
+    proc.on('close', () => resolve(Uint8Array.from(out)))
+  })
+  peaksCache.set(file, p)
+  return p
+})
 ipcMain.handle('media:extractAudio', (_e, { file, id, streams }) => extractAudioFiles(file, id, streams))
 
 async function describeFile(file) {
