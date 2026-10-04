@@ -1,71 +1,42 @@
-# Publishing the editor on GitHub (and sending updates)
+# Publishing and updates
 
-You never need to type commands. Everything below uses **GitHub Desktop** (a free app with buttons).
+**Status:** this project lives at https://github.com/phsrp/Vibe-video-editor and version **1.0.0** is
+published under [Releases](https://github.com/phsrp/Vibe-video-editor/releases/latest).
 
-How it works: you keep the project on GitHub. Each time you "tag" a new version, GitHub builds the
-installer by itself and publishes it as a **Release**. Copies of the editor that people have installed
-notice the new release, download it, and show **"Restart to update"** in the top bar.
-
----
-
-## One-time setup
-
-1. **Make a GitHub account** at https://github.com (free).
-2. **Install GitHub Desktop** from https://desktop.github.com and sign in with your account.
-3. **Put the project on GitHub**
-   1. In GitHub Desktop: **File → Add local repository…** and choose this project folder.
-   2. It says the folder is not a repository: click **create a repository**.
-   3. Leave the name as it is (or use `vibe-video-editor`), click **Create repository**.
-   4. Type `First version` in the box at the bottom left and click **Commit to main**.
-   5. Click **Publish repository**. **Untick "Keep this code private"** (the editor can only check
-      for updates on a public repository), then click **Publish repository**.
-4. **Tell Claude your GitHub username and the repository name** so it can fill them into
-   `package.json` (the `"owner"` and `"repo"` lines under `"publish"`). Or edit those two lines yourself.
-   Then in GitHub Desktop: **Commit to main** and **Push origin**.
-5. **Make the first release**
-   1. In GitHub Desktop open the **History** tab, right-click the newest commit and choose **Create Tag…**
-   2. Type `v1.0.0` and click **Create Tag**.
-   3. Click **Push origin** (top bar).
-   4. On github.com open your repository and click the **Actions** tab. A job called **Release** runs
-      (about 5-10 minutes). Wait for the green tick.
-   5. Back on the repository front page, on the right, click **Releases** and open **v1.0.0**.
-      Download **Vibe-Video-Editor-Setup-1.0.0.exe** and run it. Install **this** one: it knows where to
-      look for updates. (The installer in the project's `release` folder is only for testing.)
-
-Windows may show **"Windows protected your PC"** because the installer is not signed with a paid
-certificate. Click **More info → Run anyway**. It is normal for unsigned apps.
+How it works: each time a version tag (like `v1.0.1`) is pushed, GitHub builds the Windows installer by itself
+(about 3 minutes) and publishes it as a **Release**. Copies of the editor that people have installed look at the
+latest release, and offer to download it (see **Updates** in the README).
 
 ---
 
 ## Sending an update
 
-1. Make the change (ask Claude, or edit yourself). Change `"version"` in `package.json` to a higher
-   number, for example `1.0.1`. Claude will do this for you when you ask for an update.
-2. In GitHub Desktop: type a short description, click **Commit to main**, then **Push origin**.
-3. **History** tab → right-click that commit → **Create Tag…** → type `v1.0.1` (always the letter `v`
-   plus the exact version number from `package.json`) → **Create Tag** → **Push origin**.
-4. Wait for the green tick under **Actions** on github.com.
-5. Anyone with the editor installed is told about it. A few seconds after the editor starts (and every
-   4 hours after that) it checks GitHub. If there is a newer version, a window asks:
-   - **Download**: downloads the update (with a progress bar), then offers **Restart now** or **Later**
-     (if you pick Later it installs the next time you close the editor).
-   - **Remind me later**: closes the window and asks again in about 4 hours. A small **Update x.y.z**
-     button stays in the tab bar if you change your mind.
+**The easy way:** tell Claude what you want changed and then say "push an update". Claude bumps the version number,
+commits, pushes, tags it, and checks that GitHub's build finishes and the installer appears.
 
-   Nothing is ever downloaded without clicking **Download**.
-6. **Settings → Automatic updates** (on by default) turns the automatic checking on or off. You can
-   always check by hand with **Settings → Check now**. The version number in the top right also opens Settings.
-Projects, settings and your own transitions are kept when updating (they live in your user profile,
-not in the program folder).
+**By hand with GitHub Desktop** (a free app, https://desktop.github.com):
+1. Make the change. In `package.json` raise `"version"`, for example from `1.0.0` to `1.0.1`.
+2. In GitHub Desktop: write a short description, **Commit to main**, then **Push origin**.
+3. **History** tab, right-click that commit, **Create Tag…**, type `v1.0.1` (the letter `v` plus the exact version
+   number from `package.json`), **Create Tag**, then **Push origin**.
+4. On github.com open the **Actions** tab and wait for the green tick, then check **Releases**.
+
+Installed copies find out about it shortly after they start (or when someone clicks **Settings → Check now**) and
+show the **Download / Remind me later** window. Nothing is downloaded without clicking Download.
+
+Projects, settings and your own transitions are kept when updating (they live in your user profile, not in the
+program folder).
 
 ---
 
 ## Good to know
 
-- **Private repository:** the update check needs the repository to be public. Your source code is then
-  public too. (A way around it exists, but it needs an access token inside the app, so it is not recommended.)
-- **Version numbers must go up.** If the tag and `package.json` disagree, the release gets the wrong name.
+- **Version numbers must go up**, and the tag must match `package.json` (tag `v1.0.1` means version `1.0.1`).
+- **The repository must stay public.** Installed copies read the releases without any password.
+- **Windows "protected your PC" warning:** the installer is not signed with a paid certificate, so Windows shows this
+  on first run. Click **More info → Run anyway**. It is normal for unsigned apps.
 - **Old versions stay** on the Releases page, so you can always download an earlier one.
-- **Where things are stored:** `%APPDATA%\vibe-video-editor` holds your transitions folder, caches and settings.
-- **Build it on your own PC instead** (no GitHub): run `npm run dist`. The installer appears in the
-  `release` folder. It will not auto-update unless it was built from a repository that is set up as above.
+- **Where things are stored:** `%APPDATA%\vibe-video-editor` holds settings, recent projects, caches and your transitions folder.
+- **Build on your own PC instead** (no GitHub): run `npm run dist`. The installer appears in the `release` folder.
+- **Pictures in the README** can be recreated with `scripts/make-banner.js` (the banner). The screenshots were
+  taken from the running app.
