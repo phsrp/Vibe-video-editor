@@ -1,2 +1,2 @@
-﻿- Update popup now lists what is new in each version, as short bullet points
-- Middle-click a project tab to save it and close it; reopen it from Recent projects on the Home page
+- The editor now checks for updates the moment it opens
+- Update popup lists what is new in each version

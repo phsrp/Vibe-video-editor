@@ -375,7 +375,8 @@ function applyUpdateSchedule() {
     checkTimer = null
   }
   if (!updater || !readSettings().autoUpdate) return
-  checkTimer = { t: setTimeout(() => runCheck(false), 8000), i: setInterval(() => runCheck(false), SNOOZE_MS) }
+  // only once, right as the editor opens (a short wait lets the window finish loading to show the popup)
+  checkTimer = { t: setTimeout(() => runCheck(false), 2000), i: null }
 }
 
 function setupUpdater() {
