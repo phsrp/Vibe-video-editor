@@ -5,7 +5,7 @@
 <h1 align="center">Vibe Video Editor</h1>
 
 <p align="center">
-  A Windows video editor with PowerPoint-style transitions, keyframes, multi-track audio and 4K export.<br>
+  A Windows video editor with goofy PowerPoint-style transitions, keyframes, multi-track audio and 4K export.<br>
   <b>Every line of it was written by AI.</b>
 </p>
 
