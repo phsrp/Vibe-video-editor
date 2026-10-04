@@ -11,6 +11,16 @@ export default function UpdateDialog({ update, onDownload, onLater, onHide, onIn
             <p className="upd-text">
               Vibe Video Editor <b>{update.version}</b> is ready to download. You have {update.current}.
             </p>
+            {update.notes && update.notes.length > 0 && (
+              <>
+                <div className="upd-new">What's new</div>
+                <ul className="upd-notes">
+                  {update.notes.map((n, i) => (
+                    <li key={i}>{n}</li>
+                  ))}
+                </ul>
+              </>
+            )}
             <div className="hint left">Your projects and settings are not affected.</div>
             <div className="modal-foot">
               <button onClick={onLater}>Remind me later</button>

@@ -84,13 +84,18 @@ export default function App() {
     }
   }
 
-  const closeTab = async (id) => {
+  // quick = middle-click: save without asking, then close (it stays in Recent projects on Home)
+  const closeTab = async (id, quick = false) => {
     const tab = tabs.find((t) => t.id === id)
     const h = handles.current[id]
     if (tab && h && h.isDirty()) {
-      const choice = await window.api.askSave(tab.title)
-      if (choice === 2) return
-      if (choice === 0 && !(await h.save())) return
+      if (quick) {
+        if (!(await h.save())) return // save window cancelled: keep the tab open
+      } else {
+        const choice = await window.api.askSave(tab.title)
+        if (choice === 2) return
+        if (choice === 0 && !(await h.save())) return
+      }
     }
     window.api.clearAutosave(id)
     const idx = tabs.findIndex((t) => t.id === id)
@@ -144,7 +149,15 @@ export default function App() {
           <Icon name="home" /> Home
         </button>
         {tabs.map((t) => (
-          <div key={t.id} className={'tab' + (activeId === t.id ? ' on' : '')} onClick={() => setActiveId(t.id)} title={t.path || 'Not saved yet'}>
+          <div key={t.id} className={'tab' + (activeId === t.id ? ' on' : '')} onClick={() => setActiveId(t.id)}
+            onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+            onAuxClick={(e) => {
+              if (e.button === 1) {
+                e.preventDefault()
+                closeTab(t.id, true)
+              }
+            }}
+            title={(t.path || 'Not saved yet') + '\nMiddle-click to save and close'}>
             <span className="tab-title">{t.title}</span>
             {t.dirty && <span className="tab-dot" title="Unsaved changes" />}
             <button

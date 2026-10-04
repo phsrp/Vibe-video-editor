@@ -258,3 +258,7 @@ button.big { padding: 11px 22px; font-size: 14px; border-radius: 10px; }
 .seg button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); position: relative; }
 .update-modal { width: 440px; }
 .upd-text { margin: 8px 0 10px; line-height: 1.6; }
+
+.upd-new { font-weight: 700; margin: 10px 0 4px; }
+.upd-notes { margin: 0 0 10px; padding-left: 20px; max-height: 180px; overflow-y: auto; font-size: 13px; line-height: 1.5; }
+.upd-notes li { margin: 2px 0; }

@@ -338,6 +338,21 @@ let checkTimer = null
 let snoozedUntil = 0
 let manualCheck = false
 
+// GitHub release notes arrive as HTML (or text, or a list): boil them down to short bullet lines
+function notesToList(n) {
+  let text = ''
+  if (Array.isArray(n)) text = n.map((x) => (x && x.note) || '').join('\n')
+  else if (typeof n === 'string') text = n
+  const items = []
+  const lis = text.match(/<li[^>]*>[\s\S]*?<\/li>/gi)
+  if (lis) lis.forEach((l) => items.push(l))
+  else text.split(/\r?\n/).forEach((l) => /^\s*[-*]\s+/.test(l) && items.push(l.replace(/^\s*[-*]\s+/, '')))
+  return items
+    .map((s) => s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 12)
+}
+
 function sendUpdate(s) {
   updateStatus = s
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:status', s)
@@ -372,7 +387,7 @@ function setupUpdater() {
   autoUpdater.on('checking-for-update', () => manualCheck && sendUpdate({ state: 'checking' }))
   autoUpdater.on('update-available', (i) => {
     const ask = manualCheck || Date.now() > snoozedUntil
-    sendUpdate({ state: ask ? 'available' : 'snoozed', version: i.version, current: app.getVersion() })
+    sendUpdate({ state: ask ? 'available' : 'snoozed', version: i.version, current: app.getVersion(), notes: notesToList(i.releaseNotes) })
     manualCheck = false
   })
   autoUpdater.on('update-not-available', () => {
@@ -392,7 +407,7 @@ ipcMain.handle('update:check', () => runCheck(true))
 ipcMain.handle('update:download', () => updater && updater.downloadUpdate().catch(() => sendUpdate({ state: 'error', during: 'download' })))
 ipcMain.handle('update:snooze', () => {
   snoozedUntil = Date.now() + SNOOZE_MS
-  sendUpdate({ state: 'snoozed', version: updateStatus.version, current: app.getVersion() })
+  sendUpdate({ state: 'snoozed', version: updateStatus.version, current: app.getVersion(), notes: updateStatus.notes })
 })
 ipcMain.handle('update:install', () => updater && updater.quitAndInstall())
 ipcMain.handle('update:debug', (_e, s) => process.env.VIBE_SELFTEST && sendUpdate(s)) // for the developer self-test
