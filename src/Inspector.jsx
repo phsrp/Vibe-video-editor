@@ -24,7 +24,7 @@ function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFre
     <>
       <div className="insp-section">Transform</div>
       {!inside && <div className="hint warn">Move the playhead over this clip to edit it.</div>}
-      <div className="mtop">
+      <div className="mtop btnrow">
         <button className={'mini wide' + (mode === 'transform' ? ' on' : '')} onClick={() => setMode(mode === 'transform' ? 'none' : 'transform')} title="Show the box on the preview: drag inside to move, drag a corner to resize, drag the round handle to rotate">
           {mode === 'transform' ? 'Hide box' : 'Show box on preview'}
         </button>

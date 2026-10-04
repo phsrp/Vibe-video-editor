@@ -1,1 +1,1 @@
-- Funny warp now sits with the other transform buttons (Show box, Free transform, Funny warp) instead of a separate section
+- Fixed the gap between the Transform buttons in the Inspector

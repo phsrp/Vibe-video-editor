@@ -324,3 +324,5 @@ button.big { padding: 11px 22px; font-size: 14px; border-radius: 10px; }
 .tl-label input[type=range].boosted, .inspector input[type=range].boosted { accent-color: var(--accent2); }
 
 .inspector .mtop { flex-wrap: wrap; gap: 6px; }
+
+.inspector .mtop.btnrow { justify-content: flex-start; }
