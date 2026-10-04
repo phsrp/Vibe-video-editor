@@ -51,12 +51,14 @@
 - **Select like in Explorer:** drag a box around clips and audio to select several, or hold Ctrl/Shift to add to the selection.
 - **Groups:** group any mix of video and audio clips so they move together; ungroup when you are done.
 - **Freeze frame:** save the exact frame under the playhead as an image and insert it. Drag its edge (or type seconds) to hold it as long as you like.
-- **Motion keyframes:** animate **position, scale, rotation and opacity** with seven easing styles (linear, smooth, ease in, ease out, overshoot, bounce, hold). Keyframes show as diamonds on the timeline, and you can drag them to retime.
-- **Transform box:** drag on the preview to move, shrink or rotate a clip; **Free transform** stretches it. Add a keyframe, move the playhead, change it again, and pick an easing (or draw your own **Custom curve**).
-- **Funny warp:** drag the four corners of the picture anywhere to bend it, with keyframes.
-- **Overlay video tracks:** **Add track → Video** makes a layer that sits on top of the video below it. Clips there can start at any time. Drag any track by its label to move it up or down, and double-click a track name to rename it.
-- **Waveforms:** audio lanes show the loudness of each clip, so you can see where the sound starts and stops.
-
+- **Transform box:** select a clip and a box appears on the preview. Drag inside it to **move**, drag a corner inwards to make the picture **smaller** (outwards for bigger), and drag the round handle to **rotate**. Press **Free transform** to let the corners (and the side handles) **stretch** the picture wider or taller instead.
+- **Keyframes made easy:** press the diamond to add a keyframe, move the playhead, then change the picture (drag it on the preview or use the sliders). Another keyframe is added for you. Position, scale, stretch, rotation and opacity animate together, and each can also have its own diamond. Keyframes show on the timeline and can be dragged to retime.
+- **Easing:** choose how the change between two keyframes feels: linear, smooth, ease in, ease out, overshoot, bounce, hold, or **Custom curve**, which shows a graph where you drag two handles to draw your own easing.
+- **Funny warp:** drag the four corners of the picture anywhere to bend it (a corner pin), also with keyframes and easing.
+- **Overlay video tracks:** **Add track** asks for a **Video** or **Audio** track. A video track is a layer that sits on top of the one below it, and its clips can start at any time (picture-in-picture, stickers, reaction videos). A video's own sound comes along as grouped audio.
+- **Rearrange and rename tracks:** drag any track by its label to move it up or down (higher video tracks are drawn on top, and you can pull audio tracks up next to the video). Double-click a track's name to rename it.
+- **Waveforms:** audio clips show their sound as a sharp waveform (drawn like DaVinci Resolve's), so you can see where speech or a beat starts and stops.
+- **Hide panels:** the Media and Inspector panels can be folded away to give the preview more room.
 ### Transitions
 - **18 PowerPoint-style transitions**, where the whole frame does the effect: cube, doors, curtains, page curl, peel, fall over, fracture, shred, crush, wind, vortex, ripple, spin, rotate, push, wipe, zoom and fade.
 - Pick one per cut and set its length (0.2 to 4 seconds). Preview it with one click.
@@ -72,7 +74,8 @@
 
 ### Projects
 - **Save and open** projects as `.json` files. Your videos are referenced, not copied.
-- **Autosave** every 15 seconds. If the editor closes before you save, it offers to bring the work back.
+- **Projects folder:** new projects are saved in **Documents > Vibe Video Editor Projects** by default. The Home page has a **Projects folder** button that opens it.
+- **Autosave** every 15 seconds. If the editor closes before you save (or restarts for an update), the project **comes back by itself** the next time you open it.
 - **Home page** with your recent projects, and **tabs** so you can work on several projects at once.
 
 ### Export
@@ -93,11 +96,12 @@ The editor can tell you when a new version is out, and it **never downloads anyt
 
 **Checking for updates**
 - Click **Settings** (top right), then **Check now**. The version number next to it also opens Settings.
-- Or just wait: with automatic updates on, it checks a few seconds after the editor starts and every few hours.
+- Or just wait: with automatic updates on, it checks once, right when the editor opens.
 
 **When there is an update** a window pops up with two choices:
 - **Download** shows a progress bar, then **Restart now** or **Later** (if you pick Later, it installs the next time you close the editor).
-- **Remind me later** closes the window and asks again in about 4 hours. A small **Update** button stays in the top bar.
+- **Remind me later** closes the window and asks again the next time you open the editor. A small **Update** button stays in the top bar.
+- The window lists **what is new** in short bullet points.
 
 **Turning automatic updates on or off**
 - Open **Settings** (top right) and use the **Automatic updates** switch. It is **on by default**.

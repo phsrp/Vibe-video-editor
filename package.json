@@ -1,6 +1,6 @@
 {
   "name": "vibe-video-editor",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "Simple video editor with PowerPoint-style GL transitions",
   "main": "electron/main.js",
   "author": "Vibe Video Editor",

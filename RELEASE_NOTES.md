@@ -1,7 +1,7 @@
-- New: on-preview Transform box. Drag to move, drag a corner inwards to shrink, drag the round handle to rotate
-- New: Free transform button lets the corners stretch the picture wider or taller
-- One keyframe button for everything, and a Custom curve easing with a graph you can draw
-- The old Warp is now called Funny warp
-- Waveforms are sharper and look more like DaVinci's
-- Media and Inspector panels can be hidden, and the preview no longer has black bars
-- Projects now save to Documents > Vibe Video Editor Projects (Home has a button for it), and unsaved projects come back automatically after an update
+- BIG UPDATE: the biggest one so far
+- Transform box on the preview: drag to move, shrink or rotate, and Free transform to stretch
+- Overlay video tracks (Add track > Video), and you can drag tracks up and down and rename them
+- Keyframes made easy: one diamond for everything, plus a Custom curve easing graph you can draw
+- Funny warp: bend the picture by its four corners
+- Sharper waveforms, hideable side panels, and a Projects folder in Documents
+- Unsaved projects now come back by themselves after an update
