@@ -1,4 +1,4 @@
-import { evalTransform, evalProp, evalWarp, hasTransform, keyAt, DEFAULTS, DEFAULT_EASE, KEY_EPS, WARP_ZERO } from './motion.js'
+import { evalTransform, evalProp, evalWarp, hasTransform, keyAt, PROPS, DEFAULTS, DEFAULT_EASE, KEY_EPS, WARP_ZERO } from './motion.js'
 
 export const uid = () => Math.random().toString(36).slice(2, 9)
 export const MIN_CLIP = 0.1
@@ -375,9 +375,48 @@ export function reducer(state, a) {
         const list = (c.anim && c.anim[a.prop]) || []
         const hit = keyAt(list, a.t)
         if (!hit) return c
-        return { ...c, anim: { ...c.anim, [a.prop]: list.map((k) => (k === hit ? { ...k, ease: a.ease } : k)) } }
+        return { ...c, anim: { ...c.anim, [a.prop]: list.map((k) => (k === hit ? { ...k, ease: a.ease, bez: a.bez || k.bez } : k)) } }
+      }
+      return a.live ? { ...state, ...mapClips(state, f) } : commit(state, mapClips(state, f))
+    }
+
+    // one keyframe for ALL the motion properties at once (add them all here, or remove those that are here)
+    case 'toggleKeyAll': {
+      const f = (c) => {
+        if (c.id !== a.id) return c
+        const anyHere = PROPS.some((p) => keyAt(c.anim && c.anim[p.id], a.t))
+        const anim = { ...c.anim }
+        let tf = c.tf
+        for (const p of PROPS) {
+          const list = anim[p.id] || []
+          const hit = keyAt(list, a.t)
+          if (anyHere) {
+            if (!hit) continue
+            const rest = list.filter((k) => k !== hit)
+            if (rest.length) anim[p.id] = rest
+            else {
+              delete anim[p.id]
+              tf = { ...DEFAULTS, ...tf, [p.id]: hit.v }
+            }
+          } else {
+            anim[p.id] = sortKeys([...list, { t: a.t, v: evalProp(c, p.id, a.t), ease: DEFAULT_EASE }])
+          }
+        }
+        return { ...c, anim, tf }
       }
       return commit(state, mapClips(state, f))
+    }
+    // easing of every motion keyframe at time t
+    case 'setEaseAll': {
+      const f = (c) => {
+        if (c.id !== a.id || !c.anim) return c
+        const anim = {}
+        for (const [p, list] of Object.entries(c.anim)) {
+          anim[p] = (list || []).map((k) => (Math.abs(k.t - a.t) < KEY_EPS ? { ...k, ease: a.ease, bez: a.bez || k.bez } : k))
+        }
+        return { ...c, anim }
+      }
+      return a.live ? { ...state, ...mapClips(state, f) } : commit(state, mapClips(state, f))
     }
 
     // remove all keyframes of a property and put it back to its default
@@ -426,9 +465,9 @@ export function reducer(state, a) {
         if (c.id !== a.id || !c.warp) return c
         const hit = keyAt(c.warp.keys, a.t)
         if (!hit) return c
-        return { ...c, warp: { ...c.warp, keys: c.warp.keys.map((k) => (k === hit ? { ...k, ease: a.ease } : k)) } }
+        return { ...c, warp: { ...c.warp, keys: c.warp.keys.map((k) => (k === hit ? { ...k, ease: a.ease, bez: a.bez || k.bez } : k)) } }
       }
-      return commit(state, mapClips(state, f))
+      return a.live ? { ...state, ...mapClips(state, f) } : commit(state, mapClips(state, f))
     }
     case 'warpReset': {
       const f = (c) => {

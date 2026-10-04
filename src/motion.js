@@ -13,6 +13,8 @@ export const PROPS = [
   { id: 'x', label: 'Position X', unit: '%', def: 0, min: -100, max: 100, step: 0.5 },
   { id: 'y', label: 'Position Y', unit: '%', def: 0, min: -100, max: 100, step: 0.5 },
   { id: 'scale', label: 'Scale', unit: '%', def: 100, min: 0, max: 400, step: 1 },
+  { id: 'sx', label: 'Stretch width', unit: '%', def: 100, min: 5, max: 400, step: 1 },
+  { id: 'sy', label: 'Stretch height', unit: '%', def: 100, min: 5, max: 400, step: 1 },
   { id: 'rot', label: 'Rotation', unit: '°', def: 0, min: -360, max: 360, step: 1 },
   { id: 'opacity', label: 'Opacity', unit: '%', def: 100, min: 0, max: 100, step: 1 },
 ]
@@ -27,6 +29,38 @@ const easeOutBounce = (u) => {
   return n * (u -= 2.625 / d) * u + 0.984375
 }
 
+// Custom curve: a cubic bezier like the ones in CSS / other editors. bez = [x1, y1, x2, y2] (the two control
+// points; the curve starts at 0,0 and ends at 1,1). y may go outside 0..1 for overshoot.
+export const DEFAULT_BEZ = [0.42, 0, 0.58, 1]
+export function bezierFn(bez) {
+  const [x1, y1, x2, y2] = bez && bez.length === 4 ? bez : DEFAULT_BEZ
+  const cx = 3 * x1
+  const bx = 3 * (x2 - x1) - cx
+  const ax = 1 - cx - bx
+  const cy = 3 * y1
+  const by = 3 * (y2 - y1) - cy
+  const ay = 1 - cy - by
+  const X = (t) => ((ax * t + bx) * t + cx) * t
+  const Y = (t) => ((ay * t + by) * t + cy) * t
+  return (u) => {
+    if (u <= 0) return 0
+    if (u >= 1) return 1
+    let lo = 0
+    let hi = 1
+    let t = u
+    for (let i = 0; i < 24; i++) {
+      const x = X(t)
+      if (Math.abs(x - u) < 1e-6) break
+      if (x < u) lo = t
+      else hi = t
+      t = (lo + hi) / 2
+    }
+    return Y(t)
+  }
+}
+// the easing of one keyframe (k = {ease, bez}) at progress u (0..1) towards the next keyframe
+export const easeOf = (k, u) => (k.ease === 'custom' ? bezierFn(k.bez)(u) : (EASES[k.ease] || EASES.linear).fn(u))
+
 // The easing is applied to the stretch from a keyframe to the NEXT one.
 export const EASES = {
   linear: { label: 'Linear', fn: (u) => u },
@@ -36,6 +70,7 @@ export const EASES = {
   back: { label: 'Overshoot', fn: (u) => 1 + 2.70158 * Math.pow(u - 1, 3) + 1.70158 * Math.pow(u - 1, 2) },
   bounce: { label: 'Bounce', fn: easeOutBounce },
   hold: { label: 'Hold (jump at next key)', fn: () => 0 },
+  custom: { label: 'Custom curve…', fn: (u) => bezierFn(DEFAULT_BEZ)(u) },
 }
 export const DEFAULT_EASE = 'easeInOut'
 
@@ -52,7 +87,7 @@ export function evalProp(clip, prop, t) {
   const a = list[i]
   const b = list[i + 1]
   const u = (t - a.t) / (b.t - a.t)
-  const e = (EASES[a.ease] || EASES.linear).fn(u)
+  const e = easeOf(a, u)
   return a.v + (b.v - a.v) * e
 }
 
@@ -61,6 +96,8 @@ export function evalTransform(clip, t) {
     x: evalProp(clip, 'x', t),
     y: evalProp(clip, 'y', t),
     scale: evalProp(clip, 'scale', t),
+    sx: evalProp(clip, 'sx', t),
+    sy: evalProp(clip, 'sy', t),
     rot: evalProp(clip, 'rot', t),
     opacity: evalProp(clip, 'opacity', t),
   }
@@ -86,7 +123,7 @@ export function evalWarp(clip, t) {
   while (i < keys.length - 2 && t >= keys[i + 1].t) i++
   const a = keys[i]
   const b = keys[i + 1]
-  const e = (EASES[a.ease] || EASES.linear).fn((t - a.t) / (b.t - a.t))
+  const e = easeOf(a, (t - a.t) / (b.t - a.t))
   return a.c.map((v, j) => v + (b.c[j] - v) * e)
 }
 
@@ -144,17 +181,20 @@ export function keyTimes(clip) {
 
 export const keyAt = (list, t) => (list || []).find((k) => Math.abs(k.t - t) < KEY_EPS)
 
-// tf -> the numbers the shader wants: [offsetX, offsetY, scale, rotation(rad)], [opacity, active]
+// tf -> the numbers the shader wants: [offsetX, offsetY, scale, rotation(rad)], [opacity, active], [stretch x, y]
 // warp (8 numbers or null) -> h (matrix), w (active)
 export function shaderTransform(tf, warp) {
   const wm = warp && !isZero(warp) ? warpMatrix(warp) : null
   const h = wm || IDENT3
   const w = wm ? 1 : 0
-  if (!tf) return { v: [0, 0, 1, 0], p: [1, 0], h, w }
-  const active = tf.x !== 0 || tf.y !== 0 || tf.scale !== 100 || tf.rot !== 0
+  if (!tf) return { v: [0, 0, 1, 0], p: [1, 0], st: [1, 1], h, w }
+  const sx = tf.sx != null ? tf.sx : 100
+  const sy = tf.sy != null ? tf.sy : 100
+  const active = tf.x !== 0 || tf.y !== 0 || tf.scale !== 100 || tf.rot !== 0 || sx !== 100 || sy !== 100
   return {
     v: [tf.x / 100, -tf.y / 100, Math.max(tf.scale, 0.01) / 100, (tf.rot * Math.PI) / 180],
     p: [Math.min(1, Math.max(0, tf.opacity / 100)), active ? 1 : 0],
+    st: [Math.max(sx, 0.01) / 100, Math.max(sy, 0.01) / 100],
     h,
     w,
   }
@@ -173,7 +213,7 @@ export function frameToRect(uv, s, tf, ratio) {
     cy -= oy
     const cs = Math.cos(rot)
     const sn = Math.sin(rot)
-    ;[cx, cy] = [(cs * cx - sn * cy) / sc, (sn * cx + cs * cy) / sc]
+    ;[cx, cy] = [(cs * cx - sn * cy) / (sc * st.st[0]), (sn * cx + cs * cy) / (sc * st.st[1])]
     cx /= ratio
   }
   return [cx * s[0] + 0.5, cy * s[1] + 0.5]
@@ -187,7 +227,9 @@ export function rectToFrame(q, s, tf, ratio) {
     const cs = Math.cos(rot)
     const sn = Math.sin(rot)
     cx *= ratio
-    ;[cx, cy] = [sc * (cs * cx + sn * cy), sc * (-sn * cx + cs * cy)]
+    cx *= sc * st.st[0]
+    cy *= sc * st.st[1]
+    ;[cx, cy] = [cs * cx + sn * cy, -sn * cx + cs * cy]
     cx = (cx + ox * ratio) / ratio
     cy += oy
   }

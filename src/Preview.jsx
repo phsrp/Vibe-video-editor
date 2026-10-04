@@ -3,9 +3,10 @@ import { createRenderer } from './glRenderer.js'
 import { evalTransform, evalWarp } from './motion.js'
 import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl } from './state.js'
 import WarpOverlay from './WarpOverlay.jsx'
+import TransformOverlay from './TransformOverlay.jsx'
 
 // Owns the canvas, the playback clock and the <video>/<img> elements.
-export default function Preview({ state, dispatch, transitions, onCompiled, active = true, warpEdit = false }) {
+export default function Preview({ state, dispatch, transitions, onCompiled, active = true, mode = 'none', freeMode = false }) {
   const activeRef = useRef(active)
   activeRef.current = active
   const canvasRef = useRef(null)
@@ -282,7 +283,8 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
     <div className="preview-wrap" ref={wrapRef}>
       <div className="preview-box" style={{ width: box.w, height: box.h }}>
         <canvas ref={canvasRef} width={1280} height={720} className="preview-canvas" />
-        {warpEdit && <WarpOverlay state={state} dispatch={dispatch} />}
+        {mode === 'warp' && <WarpOverlay state={state} dispatch={dispatch} />}
+        {mode === 'transform' && <TransformOverlay state={state} dispatch={dispatch} free={freeMode} box={box} />}
       </div>
     </div>
   )

@@ -28,6 +28,9 @@ uniform vec4 tfA;
 uniform vec4 tfB;
 uniform vec2 pA;
 uniform vec2 pB;
+// Stretch (non-uniform scale) for each source
+uniform vec2 stA;
+uniform vec2 stB;
 // Warp (corner pin): hA/hB map a point of the frame-space picture back to the source picture; wA/wB = warp active
 uniform mat3 hA;
 uniform mat3 hB;
@@ -35,7 +38,7 @@ uniform float wA;
 uniform float wB;
 // Sources are letterboxed ("contain"). Where a source fills the frame, edges are clamped.
 // Result is premultiplied: transparent outside the picture, so layers can be stacked.
-vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, mat3 h, float w, vec2 uv) {
+vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, vec2 st, mat3 h, float w, vec2 uv) {
   vec2 c = uv - 0.5;
   if (p.y > 0.5) {
     // inverse of: scale, rotate (clockwise), then move
@@ -43,7 +46,7 @@ vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, mat3 h, float w, vec2 uv) {
     c -= vec2(tf.x * ratio, tf.y);
     float cs = cos(tf.w);
     float sn = sin(tf.w);
-    c = vec2(cs * c.x - sn * c.y, sn * c.x + cs * c.y) / tf.z;
+    c = vec2(cs * c.x - sn * c.y, sn * c.x + cs * c.y) / (tf.z * st);
     c.x /= ratio;
   }
   vec2 q = c * s + 0.5;
@@ -64,8 +67,8 @@ vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, mat3 h, float w, vec2 uv) {
   vec4 tx = texture2D(t, clamp(q, 0.0, 1.0));
   return vec4(tx.rgb * tx.a * p.x, tx.a * p.x);
 }
-vec4 getFromColor(vec2 uv) { return sampleSrc(from, sA, tfA, pA, hA, wA, uv); }
-vec4 getToColor(vec2 uv) { return sampleSrc(to, sB, tfB, pB, hB, wB, uv); }
+vec4 getFromColor(vec2 uv) { return sampleSrc(from, sA, tfA, pA, stA, hA, wA, uv); }
+vec4 getToColor(vec2 uv) { return sampleSrc(to, sB, tfB, pB, stB, hB, wB, uv); }
 `
 const SINGLE = `vec4 transition(vec2 uv) { return getFromColor(uv); }`
 const FADE = `vec4 transition(vec2 uv) { return mix(getFromColor(uv), getToColor(uv), progress); }`
@@ -129,7 +132,7 @@ export function createRenderer(canvas) {
     return {
       prog,
       extras,
-      loc: { from: u('from'), to: u('to'), progress: u('progress'), ratio: u('ratio'), sA: u('sA'), sB: u('sB'), tfA: u('tfA'), tfB: u('tfB'), pA: u('pA'), pB: u('pB'), hA: u('hA'), hB: u('hB'), wA: u('wA'), wB: u('wB') },
+      loc: { from: u('from'), to: u('to'), progress: u('progress'), ratio: u('ratio'), sA: u('sA'), sB: u('sB'), tfA: u('tfA'), tfB: u('tfB'), pA: u('pA'), pB: u('pB'), stA: u('stA'), stB: u('stB'), hA: u('hA'), hB: u('hB'), wA: u('wA'), wB: u('wB') },
     }
   }
 
@@ -163,6 +166,8 @@ export function createRenderer(canvas) {
     gl.uniform4f(p.loc.tfB, ...tB.v)
     gl.uniform2f(p.loc.pA, ...tA.p)
     gl.uniform2f(p.loc.pB, ...tB.p)
+    gl.uniform2f(p.loc.stA, ...tA.st)
+    gl.uniform2f(p.loc.stB, ...tB.st)
     gl.uniformMatrix3fv(p.loc.hA, false, tA.h)
     gl.uniformMatrix3fv(p.loc.hB, false, tB.h)
     gl.uniform1f(p.loc.wA, tA.w)

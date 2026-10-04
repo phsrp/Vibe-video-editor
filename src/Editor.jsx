@@ -38,7 +38,29 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
   const autosavedJson = useRef('')
   const projectName = projectPath ? projectPath.split(/[\\/]/).pop().replace(/\.json$/i, '') : 'Untitled'
   const total = projectDuration(state)
-  const [warpEdit, setWarpEdit] = useState(false)
+  const [mode, setMode] = useState('transform') // what is drawn over the preview: 'transform' box, 'warp' handles or 'none'
+  const [freeMode, setFreeMode] = useState(false) // Free transform: corners stretch instead of resize
+  const flag = (key) => {
+    try {
+      return localStorage.getItem(key) !== '0'
+    } catch {
+      return true
+    }
+  }
+  const [binOpen, setBinOpenState] = useState(() => flag('vibe.binOpen'))
+  const [inspOpen, setInspOpenState] = useState(() => flag('vibe.inspOpen'))
+  const setBinOpen = (v) => {
+    setBinOpenState(v)
+    try {
+      localStorage.setItem('vibe.binOpen', v ? '1' : '0')
+    } catch {}
+  }
+  const setInspOpen = (v) => {
+    setInspOpenState(v)
+    try {
+      localStorage.setItem('vibe.inspOpen', v ? '1' : '0')
+    } catch {}
+  }
 
   // Add imported files to the project, then prepare their audio streams in the background.
   const extractPending = (items) => {
@@ -239,9 +261,18 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         </button>
       </header>
       <div className="top">
-        <aside className="bin">
+        <aside className={'bin' + (binOpen ? '' : ' collapsed')}>
+          {!binOpen && (
+            <button className="collapse-strip" onClick={() => setBinOpen(true)} title="Show the media panel">
+              <Icon name="right" size={14} />
+              <span>Media</span>
+            </button>
+          )}
           <div className="panel-title">
-            Media
+            <span className="title-left">
+              <button className="mini" onClick={() => setBinOpen(false)} title="Hide the media panel"><Icon name="left" size={12} /></button>
+              Media
+            </span>
             <span className="btn-row">
               <button className="primary" onClick={() => importFiles('video')} disabled={busy}>
                 {busy ? 'Working…' : '+ Video / image'}
@@ -282,7 +313,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         </aside>
 
         <main className="stage">
-          <Preview state={state} dispatch={dispatch} transitions={transitions} onCompiled={setTrErrors} active={active} warpEdit={warpEdit} />
+          <Preview state={state} dispatch={dispatch} transitions={transitions} onCompiled={setTrErrors} active={active} mode={mode} freeMode={freeMode} />
           <div className="transport">
             <button onClick={() => dispatch({ type: 'setPlayhead', t: 0, user: true })} title="Go to start"><Icon name="skipBack" fill /></button>
             <button className="primary play" onClick={() => dispatch({ type: 'setPlaying', value: !state.playing })}>
@@ -302,8 +333,12 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
           errors={trErrors}
           onReload={loadTransitions}
           onOpenFolder={() => window.api.openTransitionsFolder()}
-          warpEdit={warpEdit}
-          setWarpEdit={setWarpEdit}
+          mode={mode}
+          setMode={setMode}
+          freeMode={freeMode}
+          setFreeMode={setFreeMode}
+          open={inspOpen}
+          setOpen={setInspOpen}
         />
       </div>
 

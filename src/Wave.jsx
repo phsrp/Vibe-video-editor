@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
-// Waveforms: a small picture of the loudness of an audio file inside its clip on the timeline.
+// Waveforms: a picture of the loudness of an audio file inside its clip on the timeline.
+// Only the part of the clip that is on screen is drawn, one bar per screen pixel, so it stays sharp at any zoom.
 const cache = new Map() // file -> {data, promise}
 
 export function usePeaks(file) {
@@ -26,30 +27,44 @@ export function usePeaks(file) {
   return e && e.data
 }
 
-const RATE = 50 // values per second, see electron/main.js
+const RATE = 200 // values per second, see electron/main.js
 
-// Draws the part [from, to] (seconds of the file) of the file's waveform into the whole canvas.
-export default function Wave({ file, from, to, width, height }) {
+// Draws the part [from, to] (seconds of the file) of the file's waveform over a clip that is `width` px wide
+// and starts `left` px into the lane; `view` = {l, r}: the lane pixels that are on screen.
+export default function Wave({ file, from, to, width, left, view, height }) {
   const ref = useRef(null)
   const peaks = usePeaks(file)
-  const w = Math.max(1, Math.min(6000, Math.round(width)))
+  const x0 = Math.max(0, Math.floor(view.l - left))
+  const x1 = Math.min(Math.ceil(width), Math.ceil(view.r - left))
+  const w = x1 - x0
   useEffect(() => {
     const cv = ref.current
-    if (!cv || !peaks || !peaks.length) return
+    if (!cv || !peaks || !peaks.length || w <= 0) return
+    const dpr = window.devicePixelRatio || 1
+    const cw = Math.max(1, Math.round(w * dpr))
+    cv.width = cw
+    cv.height = Math.round(height * dpr)
     const g = cv.getContext('2d')
-    g.clearRect(0, 0, w, height)
     g.fillStyle = getComputedStyle(cv).color
-    const mid = height / 2
+    const mid = cv.height / 2
     const span = Math.max(0.001, to - from)
-    for (let x = 0; x < w; x++) {
-      const a = Math.floor((from + (x / w) * span) * RATE)
-      const b = Math.max(a + 1, Math.floor((from + ((x + 1) / w) * span) * RATE))
+    const secPerPx = span / width
+    // the centre line, like other editors
+    g.globalAlpha = 0.5
+    g.fillRect(0, Math.floor(mid), cw, Math.max(1, Math.round(dpr * 0.6)))
+    g.globalAlpha = 1
+    for (let x = 0; x < cw; x++) {
+      const t0 = from + (x0 + x / dpr) * secPerPx
+      const t1 = from + (x0 + (x + 1) / dpr) * secPerPx
+      const a = Math.floor(t0 * RATE)
+      const b = Math.max(a + 1, Math.ceil(t1 * RATE))
       let m = 0
       for (let i = a; i < b && i < peaks.length; i++) if (peaks[i] > m) m = peaks[i]
-      const h = Math.max(1, (m / 255) * (height - 4))
-      g.fillRect(x, mid - h / 2, 1, h)
+      if (!m) continue
+      const h = Math.max(1, Math.round((m / 255) * (cv.height - 2)))
+      g.fillRect(x, Math.round(mid - h / 2), 1, h)
     }
-  }, [peaks, from, to, w, height])
-  if (!file) return null
-  return <canvas ref={ref} className="wave" width={w} height={height} />
+  }, [peaks, from, to, width, x0, w, height])
+  if (!file || w <= 0) return null
+  return <canvas ref={ref} className="wave" style={{ left: x0, width: w, height }} />
 }

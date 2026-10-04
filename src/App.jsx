@@ -121,24 +121,23 @@ export default function App() {
         newTab() // tests drive a project directly
         return
       }
-      const saved = (await window.api.listAutosaves()).filter((a) => {
+      // Projects that were open but never saved come back by themselves (no question that could be
+      // answered wrongly). Their recovery copies are kept until the tab is saved or closed.
+      const all = await window.api.listAutosaves()
+      const saved = []
+      for (const a of all) {
+        let useful = false
         try {
           const d = JSON.parse(a.json)
-          return (d.clips || []).length || (d.audioClips || []).length || (d.overlayClips || []).length
-        } catch {
-          return false
-        }
+          useful = (d.clips || []).length || (d.audioClips || []).length || (d.overlayClips || []).length
+        } catch {}
+        if (useful) saved.push(a)
+        else window.api.clearAutosave(a.id)
+      }
+      saved.forEach((a, i) => {
+        setTabs((t) => [...t, { id: a.id, title: 'Untitled', path: null, dirty: true, initial: { file: null, json: a.json } }])
+        if (i === 0) setActiveId(a.id)
       })
-      if (!saved.length) return window.api.clearAutosave()
-      const n = saved.length
-      if (window.confirm(`Restore ${n === 1 ? 'the project' : n + ' projects'} you had open last time (not saved)?`)) {
-        window.api.clearAutosave()
-        saved.forEach((a, i) => {
-          const id = newId()
-          setTabs((t) => [...t, { id, title: 'Untitled', path: null, dirty: true, initial: { file: null, json: a.json } }])
-          if (i === 0) setActiveId(id)
-        })
-      } else window.api.clearAutosave()
     })()
   }, [])
 

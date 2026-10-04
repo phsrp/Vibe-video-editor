@@ -1,5 +1,7 @@
-- New: Warp. Drag the four corners of a video or image on the preview, with keyframes and easing
-- New: overlay video tracks (Add track > Video). Layer clips over each other and start them at any time
-- New: drag any track up or down to reorder it, and double-click a track name to rename it
-- New: waveforms on the audio lanes
-- The Add track button now asks whether you want a video or an audio track
+- New: on-preview Transform box. Drag to move, drag a corner inwards to shrink, drag the round handle to rotate
+- New: Free transform button lets the corners stretch the picture wider or taller
+- One keyframe button for everything, and a Custom curve easing with a graph you can draw
+- The old Warp is now called Funny warp
+- Waveforms are sharper and look more like DaVinci's
+- Media and Inspector panels can be hidden, and the preview no longer has black bars
+- Projects now save to Documents > Vibe Video Editor Projects (Home has a button for it), and unsaved projects come back automatically after an update

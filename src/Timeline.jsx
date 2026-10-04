@@ -7,7 +7,7 @@ import { layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKe
 const TRACK_PAD = 12
 const LABEL = 160
 const H_VIDEO = 76
-const H_AUDIO = 44
+const H_AUDIO = 60
 
 // a stable colour per group, shown as a stripe on every member
 const groupColor = (g) => {
@@ -68,6 +68,30 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
   const [rowDrag, setRowDrag] = useState(null) // {key, to}: a track being dragged up or down
   const [showAdd, setShowAdd] = useState(false) // the 'Add track' popup
   const rowEls = useRef({})
+  // the part of the timeline that is on screen (in lane pixels), so waveforms are only drawn there, sharp
+  const [view, setView] = useState({ l: 0, r: 3000 })
+  useEffect(() => {
+    const el = scrollRef.current
+    let raf = 0
+    const upd = () => {
+      raf = 0
+      const l = Math.floor((el.scrollLeft - LABEL - TRACK_PAD) / 250) * 250
+      const r = Math.ceil((el.scrollLeft + el.clientWidth - LABEL - TRACK_PAD) / 250) * 250
+      setView((v) => (v.l === l && v.r === r ? v : { l, r }))
+    }
+    const on = () => {
+      if (!raf) raf = requestAnimationFrame(upd)
+    }
+    upd()
+    el.addEventListener('scroll', on, { passive: true })
+    const ro = new ResizeObserver(on)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', on)
+      ro.disconnect()
+      cancelAnimationFrame(raf)
+    }
+  }, [])
 
   const clips = layout(state.clips)
   const aclips = audioLayout(state.audioClips)
@@ -502,7 +526,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
 
   const renderMain = (key) => (
     <div className={'tl-row' + rowClass(key)} key={key} ref={rowRef(key)} style={{ height: H_VIDEO }}>
-      <RowLabel name={state.mainName} sub="Main video (plays one clip after another)" onRename={(name) => dispatch({ type: 'renameRow', key, name })} onGrip={(e) => startRowDrag(e, key)} />
+      <RowLabel name={state.mainName} onRename={(name) => dispatch({ type: 'renameRow', key, name })} onGrip={(e) => startRowDrag(e, key)} />
       <div className="lane" onDragOver={onVideoDragOver} onDragLeave={() => setDropIdx(null)} onDrop={onVideoDrop}>
         <div className="lane-inner" style={{ left: TRACK_PAD }}>
           {clips.map((c) => {
@@ -556,7 +580,6 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
       <div className={'tl-row' + rowClass(key)} key={key} ref={rowRef(key)} style={{ height: H_VIDEO }}>
         <RowLabel
           name={tr.name}
-          sub="Overlay: sits on top of the video below it"
           onRename={(name) => dispatch({ type: 'renameRow', key, name })}
           onGrip={(e) => startRowDrag(e, key)}
           onRemove={() => dispatch({ type: 'removeVideoTrack', id: tr.id })}
@@ -629,7 +652,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                   style={{ left: c.start * zoom, width: Math.max(2, c.dur * zoom) }}
                   onPointerDown={(e) => clickStream(e, c, n)}
                 >
-                  <Wave file={(m.audioFiles || [])[n]} from={c.in} to={c.out} width={c.dur * zoom} height={H_AUDIO - 8} />
+                  <Wave file={(m.audioFiles || [])[n]} from={c.in} to={c.out} width={c.dur * zoom} left={c.start * zoom} view={view} height={H_AUDIO - 12} />
                   <span>{m.name}</span>
                 </div>
               )
@@ -670,7 +693,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                     onPointerDown={(e) => startMoveAudio(e, a)}
                     title={clipAudioName(a)}
                   >
-                    <Wave file={audioSource(a, am)} from={a.in} to={a.out} width={a.dur * zoom} height={H_AUDIO - 8} />
+                    <Wave file={audioSource(a, am)} from={a.in} to={a.out} width={Math.max(6, a.dur * zoom)} left={a.start * zoom} view={view} height={H_AUDIO - 12} />
                     <div className="handle left" onPointerDown={(e) => startTrimAudio(e, a, 'in')} />
                     <span>{a.groupId && <Icon name="link" size={11} />}{clipAudioName(a)}</span>
                     <div className="handle right" onPointerDown={(e) => startTrimAudio(e, a, 'out')} />
@@ -765,7 +788,6 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
         <div className="modal-bg" onPointerDown={() => setShowAdd(false)}>
           <div className="modal add-track" onPointerDown={(e) => e.stopPropagation()}>
             <h3>Add a track</h3>
-            <div className="hint left">Which kind of track do you want? You can drag any track up or down afterwards.</div>
             <div className="add-choices">
               <button
                 onClick={() => {
@@ -775,7 +797,6 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
               >
                 <Icon name="film" size={22} />
                 <b>Video track</b>
-                <span>An overlay layer: clips on it sit on top of the video below and can start at any time.</span>
               </button>
               <button
                 onClick={() => {
@@ -785,7 +806,6 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
               >
                 <Icon name="music" size={22} />
                 <b>Audio track</b>
-                <span>An extra lane for music, voice or sound effects.</span>
               </button>
             </div>
             <div className="modal-foot">

@@ -1,25 +1,65 @@
 import { layout, overlayLayout, soleVideoClip } from './state.js'
 import Icon from './Icon.jsx'
-import { PROPS, EASES, evalProp, keyAt, KEY_EPS } from './motion.js'
+import { PROPS, evalProp, keyAt, KEY_EPS } from './motion.js'
+import EaseEditor from './EaseEditor.jsx'
 
 const label = (n) => n.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
 
-// Position / scale / rotation / opacity with keyframes for one clip, at the current playhead.
-function MotionPanel({ clip, playhead, dispatch }) {
+// Position / scale / stretch / rotation / opacity with keyframes for one clip, at the current playhead.
+// The same things can be dragged on the preview (see TransformOverlay).
+function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFreeMode }) {
   const ts = Math.min(clip.out, Math.max(clip.in, clip.in + (playhead - clip.start)))
   const inside = playhead >= clip.start - 0.001 && playhead <= clip.start + clip.dur + 0.001
   const seek = (t) => dispatch({ type: 'setPlayhead', t: clip.start + (t - clip.in), user: true })
+  // all the motion keyframe times together
+  const times = []
+  for (const list of Object.values(clip.anim || {})) for (const k of list || []) if (!times.some((x) => Math.abs(x - k.t) < KEY_EPS)) times.push(k.t)
+  times.sort((x, y) => x - y)
+  const here = times.find((x) => Math.abs(x - ts) < KEY_EPS)
+  const prevT = [...times].reverse().find((x) => x < ts - KEY_EPS)
+  const nextT = times.find((x) => x > ts + KEY_EPS)
+  const firstKey = here != null ? PROPS.map((p) => keyAt(clip.anim && clip.anim[p.id], ts)).find(Boolean) : null
   return (
     <>
-      <div className="insp-section">Motion</div>
-      {!inside && <div className="hint warn">Move the playhead over this clip to edit its motion.</div>}
+      <div className="insp-section">Transform</div>
+      {!inside && <div className="hint warn">Move the playhead over this clip to edit it.</div>}
+      <div className="mtop">
+        <button className={'mini wide' + (mode === 'transform' ? ' on' : '')} onClick={() => setMode(mode === 'transform' ? 'none' : 'transform')} title="Show the box on the preview: drag inside to move, drag a corner to resize, drag the round handle to rotate">
+          {mode === 'transform' ? 'Hide box' : 'Show box on preview'}
+        </button>
+        <button className={'mini wide' + (freeMode ? ' on' : '')} onClick={() => setFreeMode(!freeMode)} title="Free transform: the corners stretch the picture wider or taller instead of keeping its shape">
+          Free transform
+        </button>
+      </div>
+      <div className="mtop kfall">
+        <span className="mlabel">Keyframe</span>
+        <span className="kfctl">
+          <button className="mini" disabled={prevT == null} onClick={() => seek(prevT)} title="Previous keyframe"><Icon name="left" size={12} /></button>
+          <button className={'mini kf-btn' + (here != null ? ' on' : '')} onClick={() => dispatch({ type: 'toggleKeyAll', id: clip.id, t: ts })} title={here != null ? 'Remove the keyframe here' : 'Add a keyframe here (keeps everything as it is now)'}>
+            <Icon name="diamond" size={11} fill={here != null} />
+          </button>
+          <button className="mini" disabled={nextT == null} onClick={() => seek(nextT)} title="Next keyframe"><Icon name="right" size={12} /></button>
+        </span>
+      </div>
+      {here != null ? (
+        <EaseEditor
+          ease={firstKey ? firstKey.ease : 'easeInOut'}
+          bez={firstKey && firstKey.bez}
+          onStart={() => dispatch({ type: 'checkpoint' })}
+          onChange={(ease, bez, live) => dispatch({ type: 'setEaseAll', id: clip.id, t: ts, ease, bez, live })}
+        />
+      ) : (
+        <div className="hint left">
+          {times.length
+            ? `${times.length} keyframe${times.length > 1 ? 's' : ''}. Stand on one to change its easing. Changing something at a new moment adds a keyframe there.`
+            : 'To animate: add a keyframe, move the playhead, then change the picture (drag it on the preview or use the sliders).'}
+        </div>
+      )}
       {PROPS.map((p) => {
         const list = (clip.anim && clip.anim[p.id]) || []
         const val = evalProp(clip, p.id, ts)
         const kf = keyAt(list, ts)
-        const prev = [...list].reverse().find((k) => k.t < ts - KEY_EPS)
-        const next = list.find((k) => k.t > ts + KEY_EPS)
         const set = (v) => dispatch({ type: 'setProp', id: clip.id, prop: p.id, value: v, t: ts })
         const shown = Math.round(val * 100) / 100
         return (
@@ -27,15 +67,14 @@ function MotionPanel({ clip, playhead, dispatch }) {
             <div className="mtop">
               <span className="mlabel">{p.label}</span>
               <span className="kfctl">
-                <button className="mini" disabled={!prev} onClick={() => seek(prev.t)} title="Previous keyframe"><Icon name="left" size={12} /></button>
+                {list.length > 0 && <button className="mini" onClick={() => dispatch({ type: 'clearProp', id: clip.id, prop: p.id })} title="Remove this property's keyframes and reset it">Reset</button>}
                 <button
                   className={'mini kf-btn' + (kf ? ' on' : '')}
                   onClick={() => dispatch({ type: 'toggleKey', id: clip.id, prop: p.id, t: ts })}
-                  title={kf ? 'Remove this keyframe' : 'Add a keyframe here'}
+                  title={kf ? 'Remove this keyframe' : 'Add a keyframe for just this property'}
                 >
                   <Icon name="diamond" size={11} fill={!!kf} />
                 </button>
-                <button className="mini" disabled={!next} onClick={() => seek(next.t)} title="Next keyframe"><Icon name="right" size={12} /></button>
               </span>
             </div>
             <div className="minput">
@@ -57,29 +96,15 @@ function MotionPanel({ clip, playhead, dispatch }) {
               />
               <span className="unit">{p.unit}</span>
             </div>
-            {list.length > 0 && (
-              <div className="mease">
-                {kf ? (
-                  <select value={kf.ease} onChange={(e) => dispatch({ type: 'setEase', id: clip.id, prop: p.id, t: ts, ease: e.target.value })} title="How the value changes from this keyframe to the next">
-                    {Object.entries(EASES).map(([k, e]) => (
-                      <option key={k} value={k}>{e.label}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <span className="hint left">{list.length} keyframe{list.length > 1 ? 's' : ''}. Stand on one to change its easing.</span>
-                )}
-                <button className="mini" onClick={() => dispatch({ type: 'clearProp', id: clip.id, prop: p.id })} title="Remove all keyframes and reset">Reset</button>
-              </div>
-            )}
           </div>
         )
       })}
     </>
   )
 }
-// Warp (corner pin): drag the four corners on the preview. Keyframes work like the motion ones, but
-// one keyframe holds the whole shape.
-function WarpPanel({ clip, playhead, dispatch, warpEdit, setWarpEdit }) {
+
+// Funny warp: drag the four corners of the picture anywhere (corner pin). One keyframe holds the whole shape.
+function WarpPanel({ clip, playhead, dispatch, mode, setMode }) {
   const ts = Math.min(clip.out, Math.max(clip.in, clip.in + (playhead - clip.start)))
   const inside = playhead >= clip.start - 0.001 && playhead <= clip.start + clip.dur + 0.001
   const seek = (t) => dispatch({ type: 'setPlayhead', t: clip.start + (t - clip.in), user: true })
@@ -88,12 +113,13 @@ function WarpPanel({ clip, playhead, dispatch, warpEdit, setWarpEdit }) {
   const prev = [...keys].reverse().find((k) => k.t < ts - KEY_EPS)
   const next = keys.find((k) => k.t > ts + KEY_EPS)
   const warped = !!clip.warp && (keys.length > 0 || (clip.warp.fixed || []).some((v) => v !== 0))
+  const on = mode === 'warp'
   return (
     <>
-      <div className="insp-section">Warp</div>
+      <div className="insp-section">Funny warp</div>
       <div className="mtop">
-        <button className={'mini wide' + (warpEdit ? ' on' : '')} onClick={() => setWarpEdit(!warpEdit)} title="Show four handles on the preview and drag them to bend the picture">
-          <Icon name="diamond" size={11} /> {warpEdit ? 'Hide handles' : 'Warp on preview'}
+        <button className={'mini wide' + (on ? ' on' : '')} onClick={() => setMode(on ? 'transform' : 'warp')} title="Show four handles on the preview and drag them to bend the picture">
+          <Icon name="diamond" size={11} /> {on ? 'Hide handles' : 'Funny warp on preview'}
         </button>
         <span className="kfctl">
           <button className="mini" disabled={!prev} onClick={() => seek(prev.t)} title="Previous warp keyframe"><Icon name="left" size={12} /></button>
@@ -103,33 +129,23 @@ function WarpPanel({ clip, playhead, dispatch, warpEdit, setWarpEdit }) {
           <button className="mini" disabled={!next} onClick={() => seek(next.t)} title="Next warp keyframe"><Icon name="right" size={12} /></button>
         </span>
       </div>
-      {!inside && warpEdit && <div className="hint warn">Move the playhead over this clip to warp it.</div>}
-      {keys.length > 0 && (
-        <div className="mease">
-          {kf ? (
-            <select value={kf.ease} onChange={(e) => dispatch({ type: 'warpEase', id: clip.id, t: ts, ease: e.target.value })} title="How the shape changes from this keyframe to the next">
-              {Object.entries(EASES).map(([k, e]) => (
-                <option key={k} value={k}>{e.label}</option>
-              ))}
-            </select>
-          ) : (
-            <span className="hint left">{keys.length} keyframe{keys.length > 1 ? 's' : ''}. Stand on one to change its easing.</span>
-          )}
-        </div>
+      {!inside && on && <div className="hint warn">Move the playhead over this clip to warp it.</div>}
+      {kf && (
+        <EaseEditor
+          ease={kf.ease}
+          bez={kf.bez}
+          onStart={() => dispatch({ type: 'checkpoint' })}
+          onChange={(ease, bez, live) => dispatch({ type: 'warpEase', id: clip.id, t: ts, ease, bez, live })}
+        />
       )}
-      <div className="hint left">
-        {keys.length
-          ? 'Move the playhead and drag a corner: a keyframe is added there. Then pick the easing.'
-          : 'Drag the corners on the preview. To animate it: add a keyframe, move the playhead, drag the corners again.'}
-      </div>
+      {keys.length > 0 && !kf && <div className="hint left">{keys.length} keyframe{keys.length > 1 ? 's' : ''}. Stand on one to change its easing.</div>}
       {warped && (
         <button className="mini wide" onClick={() => dispatch({ type: 'warpReset', id: clip.id })} title="Remove the warp and its keyframes">Reset warp</button>
       )}
     </>
   )
 }
-
-export default function Inspector({ state, dispatch, transitions, errors, onReload, onOpenFolder, warpEdit, setWarpEdit }) {
+export default function Inspector({ state, dispatch, transitions, errors, onReload, onOpenFolder, mode, setMode, freeMode, setFreeMode, open = true, setOpen }) {
   const lay = layout(state.clips)
   const only = soleVideoClip(state)
   const idx = lay.findIndex((c) => c.id === only)
@@ -144,8 +160,17 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
   }
 
   return (
-    <aside className="inspector">
-      <div className="panel-title">Inspector</div>
+    <aside className={'inspector' + (open ? '' : ' collapsed')}>
+      {!open && (
+        <button className="collapse-strip" onClick={() => setOpen(true)} title="Show the inspector">
+          <Icon name="left" size={14} />
+          <span>Inspector</span>
+        </button>
+      )}
+      <div className="panel-title">
+        Inspector
+        <button className="mini" onClick={() => setOpen(false)} title="Hide the inspector"><Icon name="right" size={12} /></button>
+      </div>
       <div className="insp-body">
         {state.selection.length === 0 && (
           <div className="hint">Select a clip on the timeline to edit it or give it a transition from the previous clip. Drag a box around items to select several.</div>
@@ -173,8 +198,8 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
               </label>
             )}
 
-            <MotionPanel clip={clip} playhead={state.playhead} dispatch={dispatch} />
-            <WarpPanel clip={clip} playhead={state.playhead} dispatch={dispatch} warpEdit={warpEdit} setWarpEdit={setWarpEdit} />
+            <MotionPanel clip={clip} playhead={state.playhead} dispatch={dispatch} mode={mode} setMode={setMode} freeMode={freeMode} setFreeMode={setFreeMode} />
+            <WarpPanel clip={clip} playhead={state.playhead} dispatch={dispatch} mode={mode} setMode={setMode} />
 
             {oclip && <div className="hint left">This clip is on an overlay track. Drag it along its track to choose when it appears; transitions only work on the main video track.</div>}
             {!oclip && <div className="insp-section">Transition</div>}

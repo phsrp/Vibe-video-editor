@@ -92,13 +92,13 @@ function extractAudioFiles(file, id, streams) {
   return job
 }
 
-// Waveform: loudness of an audio file, 50 values per second (0-255), for drawing on the timeline
+// Waveform: loudness of an audio file, 200 values per second (0-255), for drawing on the timeline
 const peaksCache = new Map()
 ipcMain.handle('media:peaks', (_e, file) => {
   if (peaksCache.has(file)) return peaksCache.get(file)
   const p = new Promise((resolve) => {
-    const RATE = 4000
-    const PER = RATE / 50
+    const RATE = 8000
+    const PER = RATE / 200
     const { spawn } = require('child_process')
     const proc = spawn(ffmpegPath, ['-v', 'error', '-i', file, '-vn', '-ac', '1', '-ar', String(RATE), '-f', 's16le', '-'], { windowsHide: true })
     const out = []
@@ -112,7 +112,7 @@ ipcMain.handle('media:peaks', (_e, file) => {
         const v = Math.abs(buf.readInt16LE(i))
         if (v > peak) peak = v
         if (++n === PER) {
-          out.push(Math.min(255, Math.round(Math.sqrt(peak / 32768) * 255)))
+          out.push(Math.min(255, Math.round((peak / 32768) * 255 * 1.5)))
           peak = 0
           n = 0
         }
@@ -259,12 +259,22 @@ function createWindow() {
 // ---- projects (.json files) and autosave
 const autosavePath = () => path.join(app.getPath('userData'), 'autosave.json')
 
+// Where projects are saved unless you pick somewhere else: Documents > Vibe Video Editor Projects
+const projectsDir = () => {
+  const d = path.join(app.getPath('documents'), 'Vibe Video Editor Projects')
+  try {
+    fs.mkdirSync(d, { recursive: true })
+  } catch {}
+  return d
+}
+ipcMain.handle('projects:folder', () => shell.openPath(projectsDir()))
+
 ipcMain.handle('project:save', async (_e, { file, json, defaultName }) => {
   let target = file
   if (!target) {
     const r = await dialog.showSaveDialog(mainWindow, {
       title: 'Save project',
-      defaultPath: defaultName || 'My project.json',
+      defaultPath: path.join(projectsDir(), defaultName || 'My project.json'),
       filters: [{ name: 'Video project', extensions: ['json'] }],
     })
     if (r.canceled) return null
@@ -277,6 +287,7 @@ ipcMain.handle('project:save', async (_e, { file, json, defaultName }) => {
 ipcMain.handle('project:open', async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
     title: 'Open project',
+    defaultPath: projectsDir(),
     properties: ['openFile'],
     filters: [{ name: 'Video project', extensions: ['json'] }],
   })
