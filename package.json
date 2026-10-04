@@ -1,6 +1,6 @@
 {
   "name": "vibe-video-editor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Simple video editor with PowerPoint-style GL transitions",
   "main": "electron/main.js",
   "author": "Vibe Video Editor",
@@ -27,7 +27,10 @@
   "build": {
     "appId": "com.vibe.videoeditor",
     "productName": "Vibe Video Editor",
-    "directories": { "output": "release", "buildResources": "build" },
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
     "files": [
       "dist/**/*",
       "electron/**/*",
@@ -40,9 +43,21 @@
       "node_modules/ffmpeg-static/**",
       "node_modules/ffprobe-static/bin/win32/x64/**"
     ],
-    "extraResources": [{ "from": "transitions", "to": "transitions" }],
+    "extraResources": [
+      {
+        "from": "transitions",
+        "to": "transitions"
+      }
+    ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.png",
       "artifactName": "Vibe-Video-Editor-Setup-${version}.${ext}"
     },
