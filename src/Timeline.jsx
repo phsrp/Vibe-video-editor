@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { keyTimes } from './motion.js'
 import Icon from './Icon.jsx'
 import Wave from './Wave.jsx'
-import { layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKeys, audioSource, fmtTime, toUrl, uid, hasAttached, canGroup, canUngroup } from './state.js'
+import { layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKeys, audioSource, fmtTime, fmtDur, toUrl, uid, hasAttached, canGroup, canUngroup } from './state.js'
 
 const TRACK_PAD = 12
 const LABEL = 160
@@ -53,7 +53,7 @@ function RowLabel({ name, sub, volume, mute, onVolume, onMute, onRemove, onRenam
         )}
       </div>
       {sub && <div className="tl-sub" title={sub}>{sub}</div>}
-      {onVolume && <input type="range" min="0" max="1" step="0.01" value={volume} title={`Volume ${Math.round(volume * 100)}%`} onChange={(e) => onVolume(+e.target.value)} />}
+      {onVolume && <input type="range" min="0" max="2" step="0.01" value={volume} className={volume > 1 ? 'boosted' : ''} title={`Volume ${Math.round(volume * 100)}% (up to 200%)`} onChange={(e) => onVolume(+e.target.value)} />}
     </div>
   )
 }
@@ -561,7 +561,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                   ))}
                 <div className="handle left" onPointerDown={(e) => startTrim(e, c, 'in')} />
                 <span className="clip-name">{c.groupId && <Icon name="link" size={11} />}{m.name}</span>
-                <span className="clip-dur">{c.dur.toFixed(1)}s{silenced ? ' · no audio' : ''}</span>
+                <span className="clip-dur">{fmtDur(c.dur)}{silenced ? ' · no audio' : ''}</span>
                 <div className="handle right" onPointerDown={(e) => startTrim(e, c, 'out')} />
               </div>
             )
@@ -611,7 +611,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                       ))}
                     <div className="handle left" onPointerDown={(e) => startTrimOverlay(e, c, 'in')} />
                     <span className="clip-name">{c.groupId && <Icon name="link" size={11} />}{m.name}</span>
-                    <span className="clip-dur">{c.dur.toFixed(1)}s</span>
+                    <span className="clip-dur">{fmtDur(c.dur)}</span>
                     <div className="handle right" onPointerDown={(e) => startTrimOverlay(e, c, 'out')} />
                   </div>
                 )

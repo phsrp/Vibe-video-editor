@@ -1,7 +1,3 @@
-- BIG UPDATE: the biggest one so far
-- Transform box on the preview: drag to move, shrink or rotate, and Free transform to stretch
-- Overlay video tracks (Add track > Video), and you can drag tracks up and down and rename them
-- Keyframes made easy: one diamond for everything, plus a Custom curve easing graph you can draw
-- Funny warp: bend the picture by its four corners
-- Sharper waveforms, hideable side panels, and a Projects folder in Documents
-- Unsaved projects now come back by themselves after an update
+- New: volume can go up to 200% (boost), on the track sliders and in the Inspector, with a Mute button there too
+- Long clips show their length as minutes and seconds (for example 52m 19s)
+- README: easing guide with pictures, and the Projects folder location

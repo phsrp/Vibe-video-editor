@@ -804,6 +804,17 @@ export function toUrl(p) {
   return 'file:///' + encodeURI(p.replace(/\\/g, '/')).replace(/#/g, '%23').replace(/\?/g, '%3F')
 }
 
+// a clip length for the timeline: 12.3s, then 52m 19s, then 1h 05m 12s
+export function fmtDur(t) {
+  if (t < 60) return t.toFixed(1) + 's'
+  const total = Math.round(t)
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  if (h) return `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`
+  return `${m}m ${String(s).padStart(2, '0')}s`
+}
+
 export function fmtTime(t) {
   const m = Math.floor(t / 60)
   const s = Math.floor(t % 60)

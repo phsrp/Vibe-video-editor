@@ -50,15 +50,41 @@
 - **Timeline:** drag clips to reorder, drag their edges to **trim**, **split** at the playhead, zoom in and out, undo and redo.
 - **Select like in Explorer:** drag a box around clips and audio to select several, or hold Ctrl/Shift to add to the selection.
 - **Groups:** group any mix of video and audio clips so they move together; ungroup when you are done.
+- **Readable lengths:** long clips show their length as minutes and seconds (for example 52m 19s) instead of a big number of seconds.
 - **Freeze frame:** save the exact frame under the playhead as an image and insert it. Drag its edge (or type seconds) to hold it as long as you like.
 - **Transform box:** select a clip and a box appears on the preview. Drag inside it to **move**, drag a corner inwards to make the picture **smaller** (outwards for bigger), and drag the round handle to **rotate**. Press **Free transform** to let the corners (and the side handles) **stretch** the picture wider or taller instead.
 - **Keyframes made easy:** press the diamond to add a keyframe, move the playhead, then change the picture (drag it on the preview or use the sliders). Another keyframe is added for you. Position, scale, stretch, rotation and opacity animate together, and each can also have its own diamond. Keyframes show on the timeline and can be dragged to retime.
-- **Easing:** choose how the change between two keyframes feels: linear, smooth, ease in, ease out, overshoot, bounce, hold, or **Custom curve**, which shows a graph where you drag two handles to draw your own easing.
+- **Easing:** choose how the change between two keyframes feels, from seven ready-made styles or your own **Custom curve** (see [Easing](#easing) below).
 - **Funny warp:** drag the four corners of the picture anywhere to bend it (a corner pin), also with keyframes and easing.
 - **Overlay video tracks:** **Add track** asks for a **Video** or **Audio** track. A video track is a layer that sits on top of the one below it, and its clips can start at any time (picture-in-picture, stickers, reaction videos). A video's own sound comes along as grouped audio.
 - **Rearrange and rename tracks:** drag any track by its label to move it up or down (higher video tracks are drawn on top, and you can pull audio tracks up next to the video). Double-click a track's name to rename it.
 - **Waveforms:** audio clips show their sound as a sharp waveform (drawn like DaVinci Resolve's), so you can see where speech or a beat starts and stops.
 - **Hide panels:** the Media and Inspector panels can be folded away to give the preview more room.
+### Easing
+Easing decides how a value (position, size, rotation, opacity or the warp) travels from one keyframe to the next. Stand on a keyframe (the diamond is filled) and pick its easing in the Inspector. The easing belongs to the keyframe it starts from, and applies to the stretch up to the next keyframe.
+
+![The seven ready-made easing styles](docs/screenshots/easing-options.png)
+
+| Easing | What it does |
+| --- | --- |
+| **Linear** | Moves at a constant speed, with no slowing down. |
+| **Smooth** | Starts slowly, speeds up, then slows down again. Good for most things. This is the default. |
+| **Ease in** | Starts slowly and speeds up towards the next keyframe. |
+| **Ease out** | Starts fast and slows to a gentle stop. |
+| **Overshoot** | Goes slightly past the target and settles back. Feels springy. |
+| **Bounce** | Lands on the target and bounces a few times, like a ball. |
+| **Hold** | Does not move at all until the next keyframe, then jumps. Good for sudden changes. |
+| **Custom curve** | Draw it yourself (below). |
+
+**Custom curve.** Choose **Custom curve…** and a graph appears. The left edge is the first keyframe and the right edge is the next one. The curve shows the progress: the higher it is, the closer the value is to its target. Drag the two **round handles** to reshape it:
+- A steep part of the curve means fast change, and a flat part means slow change.
+- Pull a handle above the top or below the bottom to make the value go past its target and come back (an overshoot) or dip the other way first (an anticipation).
+- The dotted diagonal is Linear, for comparison. Changes show in the preview straight away.
+
+![Drawing a custom easing curve](docs/screenshots/easing-custom.png)
+
+Every keyframe can have its own easing, and the **Funny warp** keyframes have the same choices.
+
 ### Transitions
 - **18 PowerPoint-style transitions**, where the whole frame does the effect: cube, doors, curtains, page curl, peel, fall over, fracture, shred, crush, wind, vortex, ripple, spin, rotate, push, wipe, zoom and fade.
 - Pick one per cut and set its length (0.2 to 4 seconds). Preview it with one click.
@@ -69,6 +95,7 @@
 ### Audio
 - A recording with several audio streams (for example game + microphone) shows each stream as **its own lane** with its own volume and mute.
 - Add extra audio files (music, voice-over) on their own tracks.
+- **Volume up to 200%:** every audio lane and track has a volume slider from 0 to 200% (above 100% boosts it past the original). Select an audio clip and the Inspector shows the same slider, a number box and a **Mute** button.
 - **Detach** one stream, or all of a clip's audio, to move, trim or delete it on its own, and **group** it back later.
 - Audio crossfades automatically during transitions.
 
@@ -131,7 +158,8 @@ Every shortcut can be changed under **⌨ Shortcuts** in the timeline toolbar.
 
 | What | Where |
 |---|---|
-| Your projects | wherever you saved the `.json` file |
+| Your projects | **Documents\Vibe Video Editor Projects** by default (or wherever you chose when saving the `.json` file). The **Projects folder** button on the Home page opens it |
+| Recovery copies of projects you have not saved yet | `%APPDATA%\vibe-video-editor\autosave` (they reopen by themselves) |
 | Settings, recent projects, caches | `%APPDATA%\vibe-video-editor` |
 | Your transitions folder | `%APPDATA%\vibe-video-editor\transitions` (also the **Transitions folder** button in the editor) |
 

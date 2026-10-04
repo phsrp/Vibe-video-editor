@@ -145,6 +145,56 @@ function WarpPanel({ clip, playhead, dispatch, mode, setMode }) {
     </>
   )
 }
+// Volume (0 to 200%) and mute for the selected audio. They are the same settings as the sliders in the
+// track labels on the timeline, so the two always agree. The setting belongs to the whole lane / track.
+function AudioPanel({ state, dispatch }) {
+  const id = state.selection[0]
+  let name = ''
+  let st = null
+  let patch = null
+  let note = ''
+  if (id.startsWith('sa:')) {
+    const n = +id.split(':')[2]
+    st = { volume: 1, mute: false, ...state.streamSettings[n] }
+    name = st.name || `Video audio ${n + 1}`
+    patch = (p) => dispatch({ type: 'setStream', n, patch: p })
+    note = 'This sets the volume of the whole audio lane, for every clip on it.'
+  } else {
+    const a = state.audioClips.find((x) => x.id === id)
+    const tr = a && state.audioTracks.find((x) => x.id === a.trackId)
+    if (tr) {
+      st = tr
+      name = tr.name
+      patch = (p) => dispatch({ type: 'setTrack', id: tr.id, patch: p })
+      note = 'This sets the volume of the whole track, for every clip on it.'
+    }
+  }
+  if (!st) return <div className="hint">Audio selected. Drag it to move it, drag its edges to trim it, or press Delete.</div>
+  const pct = Math.round(st.volume * 100)
+  return (
+    <>
+      <div className="insp-clip">{name}</div>
+      <div className="insp-section">Audio</div>
+      <div className="mtop">
+        <span className="mlabel">Volume</span>
+        <button className={'mini wide' + (st.mute ? ' on' : '')} onClick={() => patch({ mute: !st.mute })} title={st.mute ? 'Unmute' : 'Mute'}>
+          <Icon name={st.mute ? 'mute' : 'volume'} size={13} /> {st.mute ? 'Muted' : 'Mute'}
+        </button>
+      </div>
+      <div className="minput">
+        <input type="range" min="0" max="200" step="1" value={pct} className={pct > 100 ? 'boosted' : ''} onChange={(e) => patch({ volume: +e.target.value / 100 })} />
+        <input type="number" min="0" max="200" step="1" value={pct} onChange={(e) => e.target.value !== '' && patch({ volume: Math.max(0, Math.min(200, +e.target.value)) / 100 })} />
+        <span className="unit">%</span>
+      </div>
+      <div className="mtop">
+        <span className="hint left">{pct > 100 ? 'Boosted above the original. Very loud sound can distort.' : '100% is the original volume.'}</span>
+        {pct !== 100 && <button className="mini wide" onClick={() => patch({ volume: 1 })}>Reset</button>}
+      </div>
+      <div className="hint left">{note}</div>
+      <div className="hint left">Drag the clip to move it, drag its edges to trim it, or press Delete.</div>
+    </>
+  )
+}
 export default function Inspector({ state, dispatch, transitions, errors, onReload, onOpenFolder, mode, setMode, freeMode, setFreeMode, open = true, setOpen }) {
   const lay = layout(state.clips)
   const only = soleVideoClip(state)
@@ -176,7 +226,7 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
           <div className="hint">Select a clip on the timeline to edit it or give it a transition from the previous clip. Drag a box around items to select several.</div>
         )}
         {state.selection.length > 1 && !clip && <div className="hint">{state.selection.length} items selected. Use the timeline toolbar to Group, Ungroup or Delete them.</div>}
-        {state.selection.length === 1 && !clip && <div className="hint">Audio selected. Drag it to move it, drag its edges to trim it, or press Delete.</div>}
+        {state.selection.length === 1 && !clip && <AudioPanel state={state} dispatch={dispatch} />}
         {clip && (
           <>
             <div className="insp-clip">{media ? media.name : 'Clip'}</div>

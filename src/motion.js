@@ -236,4 +236,4 @@ export function rectToFrame(q, s, tf, ratio) {
   return [cx + 0.5, cy + 0.5]
 }
 
-if (typeof window !== 'undefined') window.__motion = { evalTransform, evalProp, evalWarp, shaderTransform, frameToRect, rectToFrame } // used by the developer self-test
+if (typeof window !== 'undefined') window.__motion = { EASES, bezierFn, evalTransform, evalProp, evalWarp, shaderTransform, frameToRect, rectToFrame } // used by the developer self-test

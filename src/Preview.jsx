@@ -5,6 +5,14 @@ import { layout, overlayLayout, audioLayout, audioSource, totalDuration, project
 import WarpOverlay from './WarpOverlay.jsx'
 import TransformOverlay from './TransformOverlay.jsx'
 
+// One shared Web Audio context: every audio element goes through a gain node, which lets the volume go
+// above 100% (up to 200%). A plain <audio> element can only be turned down.
+let audioCtx = null
+const getCtx = () => {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+  return audioCtx
+}
+
 // Owns the canvas, the playback clock and the <video>/<img> elements.
 export default function Preview({ state, dispatch, transitions, onCompiled, active = true, mode = 'none', freeMode = false }) {
   const activeRef = useRef(active)
@@ -50,7 +58,11 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         const el = new Audio()
         el.preload = 'auto'
         el.src = toUrl(file)
-        e = { el }
+        const ctx = getCtx()
+        const gain = ctx.createGain()
+        ctx.createMediaElementSource(el).connect(gain)
+        gain.connect(ctx.destination)
+        e = { el, gain }
         aels.current.set(key, e)
       }
       return e
@@ -92,9 +104,11 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         else if (a.start > t && a.start - t < 3) soon.push({ key, file, src: a.in })
       }
       for (const [key, w] of want) {
-        const el = getAudio(key, w.file).el
-        el.volume = Math.max(0, Math.min(1, w.vol))
+        const ae = getAudio(key, w.file)
+        const el = ae.el
+        ae.gain.gain.value = Math.max(0, Math.min(2, w.vol))
         if (s.playing) {
+          if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {})
           if (Math.abs(el.currentTime - w.src) > 0.25) el.currentTime = w.src
           if (el.paused) el.play().catch(() => {})
         } else if (!el.paused) el.pause()
@@ -108,6 +122,9 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
           e.el.pause()
           e.el.removeAttribute('src')
           e.el.load()
+          try {
+            e.gain.disconnect()
+          } catch {}
           aels.current.delete(key)
         } else if (!want.has(key) && !e.el.paused) e.el.pause()
       }
