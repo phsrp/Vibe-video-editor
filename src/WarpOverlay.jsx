@@ -1,20 +1,20 @@
-import { layout, overlayLayout, soleVideoClip } from './state.js'
+import { layout, overlayLayout, soleVideoClip, srcAt, aspectRatio } from './state.js'
 import { evalTransform, evalWarp, warpQuad, rectToFrame, frameToRect, WARP_ZERO } from './motion.js'
 
-const RATIO = 16 / 9
 const BASE = [[0, 1], [1, 1], [1, 0], [0, 0]]
 const NAMES = ['top-left', 'top-right', 'bottom-right', 'bottom-left']
 
 // The four corner handles drawn over the preview for the selected clip. Drag a corner to warp the
 // picture; with keyframes on, dragging at a new moment adds a keyframe there.
 export default function WarpOverlay({ state, dispatch }) {
+  const RATIO = aspectRatio(state)
   const id = soleVideoClip(state)
   const clip = id && (layout(state.clips).find((c) => c.id === id) || overlayLayout(state.overlayClips).find((c) => c.id === id))
   if (!clip) return null
   if (state.playhead < clip.start - 0.001 || state.playhead > clip.start + clip.dur + 0.001) return null
   const media = state.media.find((m) => m.id === clip.mediaId)
   if (!media || !media.width || !media.height) return null
-  const ts = Math.min(clip.out, Math.max(clip.in, clip.in + (state.playhead - clip.start)))
+  const ts = srcAt(clip, state.playhead)
   const ma = media.width / media.height
   const s = [Math.max(1, RATIO / ma), Math.max(1, ma / RATIO)]
   const tf = evalTransform(clip, ts)

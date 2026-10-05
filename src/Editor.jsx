@@ -1,8 +1,9 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { reducer, initialState, layout, projectDuration, fmtTime, toUrl } from './state.js'
+import { reducer, initialState, layout, projectDuration, fmtTime, toUrl, copySelection, srcAt, ASPECTS, uid } from './state.js'
 import Preview from './Preview.jsx'
 import Timeline from './Timeline.jsx'
 import KeybindDialog from './KeybindDialog.jsx'
+import HistoryDialog from './HistoryDialog.jsx'
 import Inspector from './Inspector.jsx'
 import LibraryPanel from './LibraryPanel.jsx'
 import Icon from './Icon.jsx'
@@ -11,7 +12,7 @@ import { actionFor } from './keybinds.js'
 
 // One open project. Several of these can exist at once (one per tab); only the active one is shown
 // and reacts to the keyboard, the others keep their state and wait.
-export default function Editor({ tabId, active, initial, binds, setBinds, onMeta, onNew, onOpen, onExport, registerHandle }) {
+export default function Editor({ tabId, active, initial, binds, setBinds, onMeta, onNew, onOpen, onExport, onOpenColour, onOpenJson, registerHandle }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const stateRef = useRef(state)
   stateRef.current = state
@@ -37,6 +38,33 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
   const autosavedJson = useRef('')
   const projectName = projectPath ? projectPath.split(/[\\/]/).pop().replace(/\.json$/i, '') : 'Untitled'
   const total = projectDuration(state)
+  const [miniOn, setMiniOnState] = useState(() => {
+    try {
+      return localStorage.getItem('vibe.minimap') === '1' // off until you turn it on
+    } catch {
+      return false
+    }
+  })
+  const setMiniOn = (v) => {
+    setMiniOnState(v)
+    try {
+      localStorage.setItem('vibe.minimap', v ? '1' : '0')
+    } catch {}
+  }
+  const fitRef = useRef(null) // set by the timeline: zooms to fit the whole project
+  const [snapOn, setSnapOnState] = useState(() => {
+    try {
+      return localStorage.getItem('vibe.snap') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const setSnapOn = (v) => {
+    setSnapOnState(v)
+    try {
+      localStorage.setItem('vibe.snap', v ? '1' : '0')
+    } catch {}
+  }
   const [mode, setMode] = useState('transform') // what is drawn over the preview: 'transform' box, 'warp' handles or 'none'
   const [freeMode, setFreeMode] = useState(false) // Free transform: corners stretch instead of resize
   const flag = (key) => {
@@ -86,7 +114,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     extractPending(fresh.filter((i) => i.audioPending))
   }
 
-  if (active) window.__vibe = { dispatch, state, addMedia } // used by the developer self-test
+  if (active) window.__vibe = { dispatch, state, addMedia, historyKey: () => historyKey() } // used by the developer self-test
 
   const flash = (msg) => {
     setNote(msg)
@@ -131,7 +159,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     const c = hit.length ? hit[hit.length - 1] : lay[lay.length - 1]
     const m = c && s.media.find((x) => x.id === c.mediaId)
     if (!m || m.type !== 'video') return flash('Move the playhead over a video clip to freeze a frame.')
-    const src = Math.min(c.in + (t - c.start), c.out - 0.01)
+    const src = Math.max(0, Math.min(srcAt(c, t), c.out - 0.01))
     setBusy(true)
     try {
       const item = await window.api.freezeFrame(m.path, src, `Freeze ${m.name} @${fmtTime(src).slice(0, 5)}`)
@@ -154,7 +182,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     setBusy(true)
     try {
       const r = await restore(json)
-      dispatch({ type: 'loadProject', media: r.media, clips: r.clips, audioClips: r.audioClips, audioTracks: r.audioTracks, streamSettings: r.streamSettings, overlayClips: r.overlayClips, videoTracks: r.videoTracks, mainName: r.mainName, rowOrder: r.rowOrder })
+      dispatch({ type: 'loadProject', media: r.media, clips: r.clips, audioClips: r.audioClips, audioTracks: r.audioTracks, streamSettings: r.streamSettings, overlayClips: r.overlayClips, videoTracks: r.videoTracks, mainName: r.mainName, rowOrder: r.rowOrder, markers: r.markers, lockedRows: r.lockedRows, hiddenRows: r.hiddenRows, aspect: r.aspect })
       setProjectPath(file)
       // a project opened from a file starts "clean"; one restored from autosave still needs saving
       savedJson.current = file ? serialize(r) : serialize(initialState)
@@ -170,6 +198,30 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     }
   }
 
+  // version history: a copy of the project is kept on every save and every few minutes of work
+  const [showHistory, setShowHistory] = useState(false)
+  const lastSnap = useRef(0)
+  const historyKey = () => projectRef.current || 'tab:' + tabId
+  const snapshot = (label, json) => {
+    lastSnap.current = Date.now()
+    window.api.historyAdd({ key: historyKey(), json: json || serialize(stateRef.current), label }).catch(() => {})
+  }
+  const restoreJson = async (json) => {
+    snapshot('Before restoring an older version')
+    setBusy(true)
+    try {
+      const r = await restore(json)
+      dispatch({ type: 'loadProject', media: r.media, clips: r.clips, audioClips: r.audioClips, audioTracks: r.audioTracks, streamSettings: r.streamSettings, overlayClips: r.overlayClips, videoTracks: r.videoTracks, mainName: r.mainName, rowOrder: r.rowOrder, markers: r.markers, lockedRows: r.lockedRows, hiddenRows: r.hiddenRows, aspect: r.aspect })
+      extractPending(r.pending)
+      setShowHistory(false)
+      flash('Older version restored. Save to keep it.')
+    } catch (e) {
+      window.alert('Could not restore that version:\n' + (e.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const saveProject = async (asNew) => {
     const s = stateRef.current
     const json = serialize(s)
@@ -180,6 +232,8 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     setDirty(false)
     window.api.clearAutosave(tabId)
     rememberRecent(file, s)
+    window.api.historyAdd({ key: file, json, label: 'Saved' }).catch(() => {})
+    lastSnap.current = Date.now()
     flash('Project saved.')
     return true
   }
@@ -191,7 +245,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
 
   // let the tab bar ask this project to save (when closing a tab)
   useEffect(() => {
-    registerHandle(tabId, { save: () => saveProject(false), isDirty: () => dirtyRef.current, getState: () => stateRef.current })
+    registerHandle(tabId, { save: () => saveProject(false), isDirty: () => dirtyRef.current, getState: () => stateRef.current, dispatch })
     return () => registerHandle(tabId, null)
   }, [])
 
@@ -204,13 +258,14 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
   useEffect(() => {
     const t = setTimeout(() => setDirty(serialize(state) !== savedJson.current), 600)
     return () => clearTimeout(t)
-  }, [state.media, state.clips, state.audioClips, state.audioTracks, state.streamSettings, state.overlayClips, state.videoTracks, state.mainName, state.rowOrder, projectPath])
+  }, [state.media, state.clips, state.audioClips, state.audioTracks, state.streamSettings, state.overlayClips, state.videoTracks, state.mainName, state.rowOrder, state.markers, state.lockedRows, state.hiddenRows, state.aspect, projectPath])
 
   // autosave every 15 seconds: into the project file if it has one, otherwise a recovery copy
   useEffect(() => {
     const id = setInterval(async () => {
       const json = serialize(stateRef.current)
       if (json === savedJson.current) return
+      if (Date.now() - lastSnap.current > 3 * 60 * 1000) snapshot('Automatic copy', json)
       if (projectRef.current) {
         await window.api.saveProject(projectRef.current, json)
         savedJson.current = json
@@ -236,6 +291,14 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         freeze: freezeFrame,
         playPause: () => dispatch({ type: 'setPlaying', value: !state.playing }),
         delete: () => dispatch({ type: 'deleteSelection' }),
+        text: () => dispatch({ type: 'addText', t: state.playhead }),
+        record: () => startRecording(),
+        copy: () => doCopy(),
+        paste: () => dispatch({ type: 'paste', t: state.playhead }),
+        duplicate: () => dispatch({ type: 'duplicate' }),
+        marker: () => dispatch({ type: 'addMarker', t: state.playhead }),
+        snap: () => setSnapOn(!snapOn),
+        fit: () => fitRef.current && fitRef.current(),
         group: () => dispatch({ type: 'group' }),
         ungroup: () => dispatch({ type: 'ungroup' }),
         save: () => saveProject(false),
@@ -251,7 +314,82 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.playing, state.playhead, total, binds, showKeys])
+  }, [state.playing, state.playhead, total, binds, showKeys, snapOn])
+
+  const doCopy = () => {
+    const n = copySelection(stateRef.current)
+    flash(n ? `Copied ${n} clip${n === 1 ? '' : 's'}. Press Ctrl+V to paste at the playhead.` : 'Select a clip first, then copy it.')
+  }
+
+  // ---- voice-over: record from the microphone while the project plays, then the recording becomes an audio clip
+  const recRef = useRef(null) // {mr, stream, startAt}
+  const cancelCount = useRef(false)
+  const [rec, setRec] = useState(null) // null | {phase: 'count', n} | {phase: 'rec', t0} | {phase: 'saving'}
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!rec || rec.phase !== 'rec') return
+    const id = setInterval(() => setTick((n) => n + 1), 500)
+    return () => clearInterval(id)
+  }, [rec && rec.phase])
+  const stopRecording = () => {
+    const r = recRef.current
+    if (r) {
+      recRef.current = null
+      dispatch({ type: 'setPlaying', value: false })
+      r.mr.stop()
+    } else if (rec && rec.phase === 'count') {
+      cancelCount.current = true
+    }
+  }
+  const startRecording = async () => {
+    if (recRef.current || rec) return stopRecording()
+    let stream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+    } catch {
+      return flash('Could not use the microphone. In Windows open Settings > Privacy & security > Microphone and allow desktop apps to use it.')
+    }
+    cancelCount.current = false
+    for (let n = 3; n > 0 && !cancelCount.current; n--) {
+      setRec({ phase: 'count', n })
+      await new Promise((r) => setTimeout(r, 1000))
+    }
+    if (cancelCount.current) {
+      stream.getTracks().forEach((t) => t.stop())
+      setRec(null)
+      return
+    }
+    const startAt = stateRef.current.playhead
+    const chunks = []
+    const mr = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
+    mr.ondataavailable = (e) => e.data.size && chunks.push(e.data)
+    mr.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop())
+      setRec({ phase: 'saving' })
+      try {
+        const buf = await new Blob(chunks, { type: 'audio/webm' }).arrayBuffer()
+        const file = await window.api.saveVoiceOver(buf)
+        const [item] = await window.api.describeFiles([file])
+        addMedia([item])
+        let track = stateRef.current.audioTracks.find((x) => x.name === 'Voice-over')
+        let tid = track && track.id
+        if (!tid) {
+          tid = uid()
+          dispatch({ type: 'addAudioTrack', id: tid })
+          dispatch({ type: 'renameRow', key: 'a:' + tid, name: 'Voice-over' })
+        }
+        dispatch({ type: 'addAudioClip', mediaId: item.id, trackId: tid, start: startAt })
+        flash('Voice-over added. It is saved in Documents > Vibe Video Editor Projects > Voice-overs.')
+      } catch {
+        flash('The recording could not be saved.')
+      }
+      setRec(null)
+    }
+    recRef.current = { mr, stream, startAt }
+    mr.start()
+    setRec({ phase: 'rec', t0: performance.now() })
+    dispatch({ type: 'setPlaying', value: true })
+  }
 
   const addMediaToTimeline = (m) => {
     if (m.type === 'audio') dispatch({ type: 'addAudioClip', mediaId: m.id, trackId: null, start: state.playhead })
@@ -265,7 +403,13 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         <button onClick={onOpen} title="Open a project in a new tab">Open…</button>
         <button onClick={() => saveProject(false)}>Save</button>
         <button onClick={() => saveProject(true)}>Save as…</button>
+        <button onClick={() => setShowHistory(true)} title="Version history: earlier copies of this project"><Icon name="history" size={14} /> History</button>
         <span className="proj-name">{projectName}{dirty ? ' •' : ''}</span>
+        <select className="aspect-select" value={state.aspect} onChange={(e) => dispatch({ type: 'setAspect', aspect: e.target.value })} title="The shape of your video: landscape, vertical (phones), square and more">
+          {ASPECTS.map((x) => (
+            <option key={x.id} value={x.id}>{x.label}</option>
+          ))}
+        </select>
         <span className="spacer" />
         <button className="primary" onClick={() => onExport()} disabled={!state.clips.length && !state.overlayClips.length}>
           <Icon name="upload" /> Export video…
@@ -334,7 +478,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         />
 
         <main className="stage">
-          <Preview state={state} dispatch={dispatch} transitions={transitions} onCompiled={setTrErrors} active={active} mode={mode} freeMode={freeMode} />
+          <Preview state={state} dispatch={dispatch} transitions={transitions} onCompiled={setTrErrors} active={active} mode={mode} setMode={setMode} freeMode={freeMode} />
           <div className="transport">
             <button onClick={() => dispatch({ type: 'setPlayhead', t: 0, user: true })} title="Go to start"><Icon name="skipBack" fill /></button>
             <button className="primary play" onClick={() => dispatch({ type: 'setPlaying', value: !state.playing })}>
@@ -360,6 +504,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
           setFreeMode={setFreeMode}
           open={inspOpen}
           setOpen={setInspOpen}
+          onOpenColour={onOpenColour}
         />
       </div>
 
@@ -373,8 +518,20 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         groupKey={binds.group}
         ungroupKey={binds.ungroup}
         onFreeze={freezeFrame}
+        snapOn={snapOn}
+        setSnapOn={setSnapOn}
+        onCopy={doCopy}
+        fitRef={fitRef}
+        rec={rec}
+        onRecord={startRecording}
+        miniOn={miniOn}
+        setMiniOn={setMiniOn}
         onKeybinds={() => setShowKeys(true)}
       />
+      {showHistory && <HistoryDialog projectKey={historyKey()} onClose={() => setShowHistory(false)} onRestore={restoreJson} onOpenNew={(json) => {
+        setShowHistory(false)
+        onOpenJson(json)
+      }} />}
       {showKeys && <KeybindDialog binds={binds} setBinds={setBinds} onClose={() => setShowKeys(false)} />}
     </div>
   )

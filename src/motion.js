@@ -17,6 +17,10 @@ export const PROPS = [
   { id: 'sy', label: 'Stretch height', unit: '%', def: 100, min: 5, max: 400, step: 1 },
   { id: 'rot', label: 'Rotation', unit: '°', def: 0, min: -360, max: 360, step: 1 },
   { id: 'opacity', label: 'Opacity', unit: '%', def: 100, min: 0, max: 100, step: 1 },
+  // the mask follows keyframes too (only shown for clips that have a mask)
+  { id: 'mx', label: 'Mask X', unit: '%', def: 0, min: -100, max: 100, step: 0.5, mask: true },
+  { id: 'my', label: 'Mask Y', unit: '%', def: 0, min: -100, max: 100, step: 0.5, mask: true },
+  { id: 'ms', label: 'Mask size', unit: '%', def: 100, min: 10, max: 400, step: 1, mask: true },
 ]
 export const DEFAULTS = Object.fromEntries(PROPS.map((p) => [p.id, p.def]))
 
@@ -100,6 +104,9 @@ export function evalTransform(clip, t) {
     sy: evalProp(clip, 'sy', t),
     rot: evalProp(clip, 'rot', t),
     opacity: evalProp(clip, 'opacity', t),
+    mx: evalProp(clip, 'mx', t),
+    my: evalProp(clip, 'my', t),
+    ms: evalProp(clip, 'ms', t),
   }
 }
 
@@ -107,6 +114,9 @@ export function evalTransform(clip, t) {
 // clip.warp = { fixed: [8 numbers] | undefined, keys: [{t (source seconds), c: [8 numbers], ease}] }
 // c = [dx, dy] for the corners top-left, top-right, bottom-right, bottom-left, in % of the picture's
 // width / height (dx positive = right, dy positive = down).
+import { hasFx, fxUniforms } from './effects.js'
+import { maskUniforms } from './masks.js'
+
 export const WARP_ZERO = [0, 0, 0, 0, 0, 0, 0, 0]
 const WARP_BASE = [[0, 1], [1, 1], [1, 0], [0, 0]] // the corners in shader space (y up)
 const isZero = (c) => !c || c.every((v) => Math.abs(v) < 1e-9)
@@ -163,6 +173,7 @@ function warpMatrix(c) {
 
 // Does the clip need the effects renderer (instead of being copied straight through)?
 export function hasTransform(clip) {
+  if (hasFx(clip) || (clip.mask && clip.mask.shape)) return true
   if (clip.warp && ((clip.warp.keys && clip.warp.keys.length) || !isZero(clip.warp.fixed))) return true
   if (clip.anim && Object.values(clip.anim).some((l) => l && l.length)) return true
   return PROPS.some((p) => clip.tf && clip.tf[p.id] != null && clip.tf[p.id] !== p.def)
@@ -183,11 +194,13 @@ export const keyAt = (list, t) => (list || []).find((k) => Math.abs(k.t - t) < K
 
 // tf -> the numbers the shader wants: [offsetX, offsetY, scale, rotation(rad)], [opacity, active], [stretch x, y]
 // warp (8 numbers or null) -> h (matrix), w (active)
-export function shaderTransform(tf, warp) {
+export function shaderTransform(tf, warp, fx, mask) {
   const wm = warp && !isZero(warp) ? warpMatrix(warp) : null
   const h = wm || IDENT3
   const w = wm ? 1 : 0
-  if (!tf) return { v: [0, 0, 1, 0], p: [1, 0], st: [1, 1], h, w }
+  const fu = fxUniforms(fx)
+  const mu = maskUniforms(mask, tf)
+  if (!tf) return { v: [0, 0, 1, 0], p: [1, 0], st: [1, 1], h, w, fu, mu }
   const sx = tf.sx != null ? tf.sx : 100
   const sy = tf.sy != null ? tf.sy : 100
   const active = tf.x !== 0 || tf.y !== 0 || tf.scale !== 100 || tf.rot !== 0 || sx !== 100 || sy !== 100
@@ -197,6 +210,8 @@ export function shaderTransform(tf, warp) {
     st: [Math.max(sx, 0.01) / 100, Math.max(sy, 0.01) / 100],
     h,
     w,
+    fu,
+    mu,
   }
 }
 

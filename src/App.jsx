@@ -5,6 +5,7 @@ import Icon from './Icon.jsx'
 import SettingsDialog from './SettingsDialog.jsx'
 import UpdateDialog from './UpdateDialog.jsx'
 import ExportTab from './ExportTab.jsx'
+import ColourTab from './ColourTab.jsx'
 import { cancelExport } from './exporter.js'
 import { loadBinds, saveBinds } from './keybinds.js'
 
@@ -18,6 +19,7 @@ export default function App() {
   const [activeId, setActiveId] = useState('home')
   const handles = useRef({})
   const [exports, setExports] = useState([]) // Export tabs: [{id, projectId, running, pct, done}]
+  const [colours, setColours] = useState([]) // Colour tabs: [{id, projectId, clipId}]
   const [binds, setBinds] = useState(loadBinds)
   const [showSettings, setShowSettings] = useState(false)
   const [version, setVersion] = useState('')
@@ -67,6 +69,17 @@ export default function App() {
     const id = 'x' + projectId
     setExports((e) => (e.some((x) => x.id === id) ? e : [...e, { id, projectId, running: false, pct: 0, done: false }]))
     setActiveId(id)
+  }
+  // a Colour tab for one clip of a project (colour correction with an Apply button)
+  const openColour = (projectId, clipId) => {
+    const id = 'c' + projectId
+    setColours((c) => (c.some((x) => x.id === id) ? c.map((x) => (x.id === id ? { ...x, clipId } : x)) : [...c, { id, projectId, clipId }]))
+    setActiveId(id)
+  }
+  const closeColour = (id) => {
+    const x = colours.find((c) => c.id === id)
+    setColours((c) => c.filter((y) => y.id !== id))
+    if (x && activeId === id) setActiveId(tabs.some((t) => t.id === x.projectId) ? x.projectId : 'home')
   }
   const exportStatus = (id, st) => setExports((e) => e.map((x) => (x.id === id ? { ...x, ...st } : x)))
   const closeExport = (id) => {
@@ -126,6 +139,7 @@ export default function App() {
       }
       setExports((e) => e.filter((y) => y.projectId !== id))
     }
+    setColours((c) => c.filter((y) => y.projectId !== id))
     window.api.clearAutosave(id)
     const idx = tabs.findIndex((t) => t.id === id)
     const rest = tabs.filter((t) => t.id !== id)
@@ -233,6 +247,36 @@ export default function App() {
             </div>
           )
         })}
+        {colours.map((x) => {
+          const pt = tabs.find((t) => t.id === x.projectId)
+          return (
+            <div
+              key={x.id}
+              className={'tab export-tab' + (activeId === x.id ? ' on' : '')}
+              onClick={() => setActiveId(x.id)}
+              onAuxClick={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault()
+                  closeColour(x.id)
+                }
+              }}
+              title="Colour correction"
+            >
+              <Icon name="palette" size={12} />
+              <span className="tab-title">Colour · {pt ? pt.title : ''}</span>
+              <button
+                className="tab-x"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  closeColour(x.id)
+                }}
+                title="Close this tab"
+              >
+                <Icon name="x" size={11} />
+              </button>
+            </div>
+          )
+        })}
         <button className="tab-plus" onClick={() => newTab()} title="New project">
           <Icon name="plus" size={14} />
         </button>
@@ -268,7 +312,19 @@ export default function App() {
             onNew={() => newTab()}
             onOpen={openDialog}
             onExport={() => openExport(t.id)}
+            onOpenColour={(clipId) => openColour(t.id, clipId)}
+            onOpenJson={(json) => newTab({ file: null, json })}
             registerHandle={registerHandle}
+          />
+        ))}
+        {colours.map((x) => (
+          <ColourTab
+            key={x.id + x.clipId}
+            active={activeId === x.id}
+            clipId={x.clipId}
+            getProject={() => ({ state: handles.current[x.projectId].getState() })}
+            dispatchProject={(a) => handles.current[x.projectId].dispatch(a)}
+            onClose={() => closeColour(x.id)}
           />
         ))}
         {exports.map((x) => (

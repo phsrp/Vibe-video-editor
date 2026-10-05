@@ -37,8 +37,110 @@ uniform mat3 hB;
 uniform float wA;
 uniform float wB;
 // Sources are letterboxed ("contain"). Where a source fills the frame, edges are clamped.
+// Per-source picture effects: f = (blur, sharpen, vignette, glow), c1 = (brightness, contrast, saturation,
+// temperature), c2 = (tint, exposure, highlights, shadows), k = (similarity, smoothness, spill, key on), kc = key colour
+uniform vec4 fA; uniform vec4 fB;
+uniform vec4 c1A; uniform vec4 c1B;
+uniform vec4 c2A; uniform vec4 c2B;
+uniform vec4 kA; uniform vec4 kB;
+uniform vec3 kcA; uniform vec3 kcB;
+uniform vec2 szA; uniform vec2 szB;
+struct Fx { vec4 f; vec4 c1; vec4 c2; vec4 k; vec3 kc; vec2 sz; };
+vec2 cbcr(vec3 c) { return vec2(-0.169 * c.r - 0.331 * c.g + 0.5 * c.b, 0.5 * c.r - 0.419 * c.g - 0.081 * c.b); }
+// sample the picture at q and apply the effects: chroma key, blur / sharpen, glow, colour correction, vignette
+vec4 shade(sampler2D t, vec2 q, Fx x) {
+  vec2 px = 1.0 / x.sz;
+  vec4 col = texture2D(t, q);
+  if (x.k.w > 0.5) {
+    float dist = length(cbcr(col.rgb) - cbcr(x.kc));
+    float a = smoothstep(x.k.x, x.k.x + max(x.k.y, 0.001), dist);
+    col.a *= a;
+    col.rgb = mix(col.rgb, vec3(dot(col.rgb, vec3(0.299, 0.587, 0.114))), x.k.z * (1.0 - a));
+  }
+  float blurR = x.f.x * 24.0;
+  float sharp = x.f.y * 2.0;
+  if (blurR > 0.01 || sharp > 0.001) {
+    float rad = blurR > 0.01 ? blurR : 1.5;
+    vec3 acc = col.rgb;
+    for (int i = 0; i < 8; i++) {
+      float ang = 0.785398 * float(i);
+      vec2 d = vec2(cos(ang), sin(ang)) * px;
+      acc += texture2D(t, clamp(q + d * rad * 0.5, 0.0, 1.0)).rgb + texture2D(t, clamp(q + d * rad, 0.0, 1.0)).rgb;
+    }
+    vec3 blurred = acc / 17.0;
+    col.rgb = blurR > 0.01 ? blurred : col.rgb + (col.rgb - blurred) * sharp;
+  }
+  if (x.f.w > 0.001) {
+    float gr = x.f.w * 36.0;
+    vec3 acc = col.rgb;
+    for (int i = 0; i < 8; i++) {
+      float ang = 0.785398 * float(i);
+      vec2 d = vec2(cos(ang), sin(ang)) * px;
+      acc += texture2D(t, clamp(q + d * gr * 0.5, 0.0, 1.0)).rgb + texture2D(t, clamp(q + d * gr, 0.0, 1.0)).rgb;
+    }
+    col.rgb += max(acc / 17.0 - 0.5, 0.0) * 2.4 * x.f.w;
+  }
+  vec3 c = col.rgb;
+  c *= pow(2.0, x.c2.y * 2.0);
+  c += x.c1.x;
+  c = (c - 0.5) * x.c1.y + 0.5;
+  float lum = dot(c, vec3(0.299, 0.587, 0.114));
+  c = mix(vec3(lum), c, x.c1.z);
+  c.r += x.c1.w * 0.12;
+  c.b -= x.c1.w * 0.12;
+  c.g -= x.c2.x * 0.12;
+  c.r += x.c2.x * 0.06;
+  c.b += x.c2.x * 0.06;
+  c += x.c2.z * smoothstep(0.5, 1.0, lum) * 0.3;
+  c += x.c2.w * (1.0 - smoothstep(0.0, 0.5, lum)) * 0.3;
+  col.rgb = clamp(c, 0.0, 1.0);
+  if (x.f.z > 0.001) {
+    vec2 cq = (q - 0.5) * 2.0;
+    col.rgb *= 1.0 - x.f.z * smoothstep(0.35, 1.5, dot(cq, cq));
+  }
+  return col;
+}
+// Masks: k = (shape 0 none / 1 rect / 2 ellipse / 3 shape, feather, invert, expand), b = (centre x, y, half width, half height),
+// r = (cos, sin) of the rotation, mp = the points of a drawn shape (the first point is repeated at the end), n = how many
+uniform vec4 mkA; uniform vec4 mkB;
+uniform vec4 mbA; uniform vec4 mbB;
+uniform vec2 mrA; uniform vec2 mrB;
+uniform float mnA; uniform float mnB;
+uniform vec2 mpA[65]; uniform vec2 mpB[65];
+struct Mk { vec4 k; vec4 b; vec2 r; float n; };
+float maskAlpha(vec2 q, Mk m, vec2 mp[65]) {
+  if (m.k.x < 0.5) return 1.0;
+  float feather = max(m.k.y, 0.0015);
+  float sd;
+  vec2 p = q - m.b.xy;
+  vec2 lp = vec2(m.r.x * p.x - m.r.y * p.y, m.r.y * p.x + m.r.x * p.y);
+  if (m.k.x < 1.5) {
+    vec2 d = abs(lp) - m.b.zw;
+    sd = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+  } else if (m.k.x < 2.5) {
+    vec2 e = lp / max(m.b.zw, vec2(0.0001));
+    sd = (length(e) - 1.0) * min(m.b.z, m.b.w);
+  } else {
+    float inside = 0.0;
+    float dmin = 1000.0;
+    for (int i = 0; i < 64; i++) {
+      if (float(i) >= m.n) break;
+      vec2 a = mp[i];
+      vec2 b = mp[i + 1];
+      if (((a.y > q.y) != (b.y > q.y)) && (q.x < (b.x - a.x) * (q.y - a.y) / (b.y - a.y) + a.x)) inside = 1.0 - inside;
+      vec2 pa = q - a;
+      vec2 ba = b - a;
+      float hh = clamp(dot(pa, ba) / max(dot(ba, ba), 0.000001), 0.0, 1.0);
+      dmin = min(dmin, length(pa - ba * hh));
+    }
+    sd = inside > 0.5 ? -dmin : dmin;
+  }
+  sd -= m.k.w;
+  float al = 1.0 - smoothstep(-feather, feather, sd);
+  return m.k.z > 0.5 ? 1.0 - al : al;
+}
 // Result is premultiplied: transparent outside the picture, so layers can be stacked.
-vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, vec2 st, mat3 h, float w, vec2 uv) {
+vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, vec2 st, Fx fx, Mk mk, vec2 mp[65], mat3 h, float w, vec2 uv) {
   vec2 c = uv - 0.5;
   if (p.y > 0.5) {
     // inverse of: scale, rotate (clockwise), then move
@@ -55,7 +157,8 @@ vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, vec2 st, mat3 h, float w, v
     if (hv.z < 0.0001) return vec4(0.0);
     q = hv.xy / hv.z;
     if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) return vec4(0.0);
-    vec4 tx = texture2D(t, q);
+    vec4 tx = shade(t, q, fx);
+    tx.a *= maskAlpha(q, mk, mp);
     return vec4(tx.rgb * tx.a * p.x, tx.a * p.x);
   }
   if (p.y > 0.5) {
@@ -64,11 +167,12 @@ vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, vec2 st, mat3 h, float w, v
     if (s.x > 1.0001 && (q.x < 0.0 || q.x > 1.0)) return vec4(0.0);
     if (s.y > 1.0001 && (q.y < 0.0 || q.y > 1.0)) return vec4(0.0);
   }
-  vec4 tx = texture2D(t, clamp(q, 0.0, 1.0));
+  vec4 tx = shade(t, clamp(q, 0.0, 1.0), fx);
+  tx.a *= maskAlpha(q, mk, mp);
   return vec4(tx.rgb * tx.a * p.x, tx.a * p.x);
 }
-vec4 getFromColor(vec2 uv) { return sampleSrc(from, sA, tfA, pA, stA, hA, wA, uv); }
-vec4 getToColor(vec2 uv) { return sampleSrc(to, sB, tfB, pB, stB, hB, wB, uv); }
+vec4 getFromColor(vec2 uv) { return sampleSrc(from, sA, tfA, pA, stA, Fx(fA, c1A, c2A, kA, kcA, szA), Mk(mkA, mbA, mrA, mnA), mpA, hA, wA, uv); }
+vec4 getToColor(vec2 uv) { return sampleSrc(to, sB, tfB, pB, stB, Fx(fB, c1B, c2B, kB, kcB, szB), Mk(mkB, mbB, mrB, mnB), mpB, hB, wB, uv); }
 `
 const SINGLE = `vec4 transition(vec2 uv) { return getFromColor(uv); }`
 const FADE = `vec4 transition(vec2 uv) { return mix(getFromColor(uv), getToColor(uv), progress); }`
@@ -132,7 +236,7 @@ export function createRenderer(canvas) {
     return {
       prog,
       extras,
-      loc: { from: u('from'), to: u('to'), progress: u('progress'), ratio: u('ratio'), sA: u('sA'), sB: u('sB'), tfA: u('tfA'), tfB: u('tfB'), pA: u('pA'), pB: u('pB'), stA: u('stA'), stB: u('stB'), hA: u('hA'), hB: u('hB'), wA: u('wA'), wB: u('wB') },
+      loc: { from: u('from'), to: u('to'), progress: u('progress'), ratio: u('ratio'), sA: u('sA'), sB: u('sB'), tfA: u('tfA'), tfB: u('tfB'), pA: u('pA'), pB: u('pB'), stA: u('stA'), stB: u('stB'), hA: u('hA'), hB: u('hB'), wA: u('wA'), wB: u('wB'), fA: u('fA'), fB: u('fB'), c1A: u('c1A'), c1B: u('c1B'), c2A: u('c2A'), c2B: u('c2B'), kA: u('kA'), kB: u('kB'), kcA: u('kcA'), kcB: u('kcB'), szA: u('szA'), szB: u('szB'), mkA: u('mkA'), mkB: u('mkB'), mbA: u('mbA'), mbB: u('mbB'), mrA: u('mrA'), mrB: u('mrB'), mnA: u('mnA'), mnB: u('mnB'), mpA: u('mpA'), mpB: u('mpB') },
     }
   }
 
@@ -151,7 +255,7 @@ export function createRenderer(canvas) {
     }
   }
 
-  function use(p, progress, sA, sB, tA, tB) {
+  function use(p, progress, sA, sB, tA, tB, dA, dB) {
     gl.useProgram(p.prog)
     gl.bindBuffer(gl.ARRAY_BUFFER, buf)
     gl.enableVertexAttribArray(0)
@@ -172,6 +276,19 @@ export function createRenderer(canvas) {
     gl.uniformMatrix3fv(p.loc.hB, false, tB.h)
     gl.uniform1f(p.loc.wA, tA.w)
     gl.uniform1f(p.loc.wB, tB.w)
+    for (const [side, tt, dd] of [['A', tA, dA], ['B', tB, dB]]) {
+      gl.uniform4f(p.loc['f' + side], ...tt.fu.f)
+      gl.uniform4f(p.loc['c1' + side], ...tt.fu.c1)
+      gl.uniform4f(p.loc['c2' + side], ...tt.fu.c2)
+      gl.uniform4f(p.loc['k' + side], ...tt.fu.k)
+      gl.uniform3f(p.loc['kc' + side], ...tt.fu.kc)
+      gl.uniform2f(p.loc['sz' + side], Math.max(1, dd[0]), Math.max(1, dd[1]))
+      gl.uniform4f(p.loc['mk' + side], ...tt.mu.mk)
+      gl.uniform4f(p.loc['mb' + side], ...tt.mu.mb)
+      gl.uniform2f(p.loc['mr' + side], ...tt.mu.mr)
+      gl.uniform1f(p.loc['mn' + side], tt.mu.n)
+      gl.uniform2fv(p.loc['mp' + side], tt.mu.pts)
+    }
     for (const e of p.extras) {
       const v = e.value
       if (e.loc == null || !v.length) continue
@@ -210,14 +327,14 @@ export function createRenderer(canvas) {
       return
     }
     const sA = scaleFor(A.w, A.h)
-    const tA = shaderTransform(A.tf, A.warp)
+    const tA = shaderTransform(A.tf, A.warp, A.fx, A.mask)
     gl.enable(gl.BLEND)
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
     if (B) {
       const p = lib.get(name) || fade
-      use(p, Math.min(1, Math.max(0, progress)), sA, scaleFor(B.w, B.h), tA, shaderTransform(B.tf, B.warp))
+      use(p, Math.min(1, Math.max(0, progress)), sA, scaleFor(B.w, B.h), tA, shaderTransform(B.tf, B.warp, B.fx, B.mask), [A.w, A.h], [B.w, B.h])
     } else {
-      use(single, 0, sA, sA, tA, tA)
+      use(single, 0, sA, sA, tA, tA, [A.w, A.h], [A.w, A.h])
     }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
   }

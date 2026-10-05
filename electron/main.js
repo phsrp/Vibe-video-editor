@@ -92,6 +92,49 @@ function extractAudioFiles(file, id, streams) {
   return job
 }
 
+// Reversed copy of a clip's range, for playing a clip backwards (preview and export). ffmpeg's "reverse" filter
+// keeps every frame it reverses in memory, so the range is cut into short chunks which are reversed one by
+// one and joined in reverse order. quality 'preview' makes a small fast copy; 'export' keeps full quality.
+const reverseJobs = new Map()
+ipcMain.handle('media:reverse', (_e, { file, from, to, quality }) => {
+  const crypto = require('crypto')
+  let mt = 0
+  try {
+    mt = fs.statSync(file).mtimeMs
+  } catch {}
+  const key = crypto.createHash('sha1').update([file, mt, from.toFixed(3), to.toFixed(3), quality || 'preview'].join('|')).digest('hex').slice(0, 16)
+  const dir = path.join(app.getPath('userData'), 'reverse')
+  fs.mkdirSync(dir, { recursive: true })
+  const out = path.join(dir, key + '.mp4')
+  if (fs.existsSync(out)) return out
+  if (reverseJobs.has(key)) return reverseJobs.get(key)
+  const job = (async () => {
+    const CH = quality === 'export' ? 2 : 3
+    const n = Math.max(1, Math.ceil((to - from) / CH))
+    const parts = []
+    const preview = quality !== 'export'
+    for (let i = n - 1; i >= 0; i--) {
+      const s = from + i * CH
+      const d = Math.min(CH, to - s)
+      if (d <= 0.001) continue
+      const part = path.join(dir, `${key}_${i}.mp4`)
+      const vf = preview ? "reverse,scale=-2:'min(540,ih)'" : 'reverse'
+      await run(ffmpegPath, ['-y', '-v', 'error', '-ss', String(s), '-t', String(d), '-i', file, '-an', '-vf', vf, '-c:v', 'libx264', '-preset', preview ? 'veryfast' : 'fast', '-crf', preview ? '27' : '14', '-pix_fmt', 'yuv420p', part])
+      parts.push(part)
+    }
+    const list = path.join(dir, key + '.txt')
+    fs.writeFileSync(list, parts.map((p) => `file '${p.replace(/\\/g, '/')}'`).join('\n'))
+    const tmpOut = out + '.part.mp4'
+    await run(ffmpegPath, ['-y', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', tmpOut])
+    fs.renameSync(tmpOut, out)
+    for (const p of parts) fs.rmSync(p, { force: true })
+    fs.rmSync(list, { force: true })
+    return out
+  })()
+  reverseJobs.set(key, job)
+  job.finally(() => reverseJobs.delete(key))
+  return job
+})
 // Waveform: loudness of an audio file, 200 values per second (0-255), for drawing on the timeline
 const peaksCache = new Map()
 ipcMain.handle('media:peaks', (_e, file) => {
@@ -125,6 +168,19 @@ ipcMain.handle('media:peaks', (_e, file) => {
   peaksCache.set(file, p)
   return p
 })
+// How loud an audio file (or a part of it) is: integrated loudness in LUFS (what streaming services measure)
+ipcMain.handle('audio:loudness', (_e, { file, stream, from, to }) =>
+  new Promise((resolve) => {
+    const args = ['-hide_banner', '-nostats', '-ss', String(Math.max(0, from || 0))]
+    if (to > from) args.push('-t', String(to - from))
+    args.push('-i', file, '-map', `0:a:${stream || 0}`, '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json', '-f', 'null', '-')
+    execFile(ffmpegPath, args, { maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+      const m = /"input_i"\s*:\s*"(-?[\d.]+|-inf)"/.exec(String(stderr))
+      const lufs = m ? parseFloat(m[1]) : null
+      resolve({ lufs: Number.isFinite(lufs) ? lufs : null })
+    })
+  })
+)
 ipcMain.handle('media:extractAudio', (_e, { file, id, streams }) => extractAudioFiles(file, id, streams))
 
 async function describeFile(file) {
@@ -510,6 +566,159 @@ ipcMain.handle('update:snooze', () => {
 ipcMain.handle('update:install', () => updater && updater.quitAndInstall())
 ipcMain.handle('update:debug', (_e, s) => process.env.VIBE_SELFTEST && sendUpdate(s)) // for the developer self-test
 ipcMain.handle('app:version', () => app.getVersion())
+// The AI model for the smart mask (MobileSAM, MIT / Apache-2.0 licence). It is not part of the installer: it is
+// downloaded once, on request, from Hugging Face into the app's data folder.
+const MODEL_FILES = [
+  { name: 'mobile_sam_image_encoder.onnx', url: 'https://huggingface.co/Acly/MobileSAM/resolve/main/mobile_sam_image_encoder.onnx', size: 28157093, sha256: '580F5FB648EA1062C0AABC26217AED56921985F03F0CBBD852BBA81D760CC749' },
+  { name: 'sam_mask_decoder_single.onnx', url: 'https://huggingface.co/Acly/MobileSAM/resolve/main/sam_mask_decoder_single.onnx', size: 16501323, sha256: '93915FC7C993AB9D59AB8C9CCD3BCE37F7509C81AB4150A74ABD4D2ABBD8570D' },
+]
+const modelsDir = () => {
+  const d = path.join(app.getPath('userData'), 'models')
+  fs.mkdirSync(d, { recursive: true })
+  return d
+}
+const modelReady = (m) => {
+  try {
+    return fs.statSync(path.join(modelsDir(), m.name)).size === m.size
+  } catch {
+    return false
+  }
+}
+function modelStatus() {
+  const files = MODEL_FILES.map((m) => ({ name: m.name, size: m.size, ready: modelReady(m) }))
+  return {
+    ready: files.every((x) => x.ready),
+    totalBytes: MODEL_FILES.reduce((a, m) => a + m.size, 0),
+    paths: { encoder: path.join(modelsDir(), MODEL_FILES[0].name), decoder: path.join(modelsDir(), MODEL_FILES[1].name) },
+  }
+}
+function downloadFile(url, dest, onBytes, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const https = require('https')
+    https
+      .get(url, { headers: { 'User-Agent': 'VibeVideoEditor' } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects < 6) {
+          res.resume()
+          return downloadFile(new URL(res.headers.location, url).href, dest, onBytes, redirects + 1).then(resolve, reject)
+        }
+        if (res.statusCode !== 200) {
+          res.resume()
+          return reject(new Error('The download failed (HTTP ' + res.statusCode + ').'))
+        }
+        const out = fs.createWriteStream(dest)
+        res.on('data', (c) => onBytes(c.length))
+        res.pipe(out)
+        out.on('finish', () => out.close(resolve))
+        out.on('error', reject)
+        res.on('error', reject)
+      })
+      .on('error', reject)
+  })
+}
+let modelJob = null
+ipcMain.handle('models:status', () => modelStatus())
+ipcMain.handle('models:download', async (e) => {
+  if (modelJob) return modelJob
+  modelJob = (async () => {
+    try {
+      const crypto = require('crypto')
+      const total = MODEL_FILES.reduce((a, m) => a + m.size, 0)
+      let done = MODEL_FILES.filter(modelReady).reduce((a, m) => a + m.size, 0)
+      const send = () => mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('models:progress', { received: done, total })
+      send()
+      for (const m of MODEL_FILES) {
+        if (modelReady(m)) continue
+        const part = path.join(modelsDir(), m.name + '.part')
+        await downloadFile(m.url, part, (n) => {
+          done += n
+          send()
+        })
+        const hash = crypto.createHash('sha256').update(fs.readFileSync(part)).digest('hex').toUpperCase()
+        if (hash !== m.sha256) {
+          fs.rmSync(part, { force: true })
+          throw new Error('The downloaded file was not what was expected, so it was thrown away. Try again.')
+        }
+        fs.renameSync(part, path.join(modelsDir(), m.name))
+      }
+      return { ...modelStatus(), error: null }
+    } catch (err) {
+      return { ...modelStatus(), error: String((err && err.message) || err) }
+    } finally {
+      modelJob = null
+    }
+  })()
+  return modelJob
+})
+// Version history: copies of a project kept as you save and work, so an earlier state can be brought back.
+// One folder per project (named after the project file, or the tab for a project not saved yet).
+const historyDir = (key) => {
+  const h = require('crypto').createHash('sha1').update(String(key)).digest('hex').slice(0, 16)
+  const d = path.join(app.getPath('userData'), 'history', h)
+  fs.mkdirSync(d, { recursive: true })
+  return d
+}
+const HISTORY_KEEP = 40
+ipcMain.handle('history:add', (_e, { key, json, label }) => {
+  const d = historyDir(key)
+  const files = fs.readdirSync(d).filter((f) => f.endsWith('.json')).sort()
+  if (files.length) {
+    try {
+      if (JSON.parse(fs.readFileSync(path.join(d, files[files.length - 1]), 'utf8')).json === json) return false // nothing changed
+    } catch {}
+  }
+  fs.writeFileSync(path.join(d, Date.now() + '.json'), JSON.stringify({ time: Date.now(), label: label || '', json }), 'utf8')
+  for (const old of files.slice(0, Math.max(0, files.length + 1 - HISTORY_KEEP))) fs.rmSync(path.join(d, old), { force: true })
+  return true
+})
+ipcMain.handle('history:list', (_e, key) => {
+  const d = historyDir(key)
+  const out = []
+  for (const f of fs.readdirSync(d).filter((x) => x.endsWith('.json')).sort().reverse()) {
+    try {
+      const v = JSON.parse(fs.readFileSync(path.join(d, f), 'utf8'))
+      const p = JSON.parse(v.json)
+      const secs = (p.clips || []).reduce((a, c) => a + (c.out - c.in) / (c.speed > 0 ? c.speed : 1), 0)
+      out.push({ id: f, time: v.time, label: v.label, clips: (p.clips || []).length + (p.overlayClips || []).length, audio: (p.audioClips || []).length, seconds: secs })
+    } catch {}
+  }
+  return out
+})
+ipcMain.handle('history:read', (_e, { key, id }) => {
+  const v = JSON.parse(fs.readFileSync(path.join(historyDir(key), path.basename(id)), 'utf8'))
+  return v.json
+})
+// The microphone (voice-over recording): allowed for this app's own window only. In developer tests a fake
+// microphone is used so nothing needs to be plugged in.
+if (process.env.VIBE_SELFTEST) {
+  app.commandLine.appendSwitch('use-fake-device-for-media-stream')
+  app.commandLine.appendSwitch('use-fake-ui-for-media-stream')
+}
+app.whenReady().then(() => {
+  const { session } = require('electron')
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'media'))
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media')
+})
+
+// A finished voice-over: the recording (webm) is turned into an .m4a (so it has a proper length) and kept in
+// Documents > Vibe Video Editor Projects > Voice-overs
+ipcMain.handle('voice:save', async (_e, { data }) => {
+  const dir = path.join(projectsDir(), 'Voice-overs')
+  fs.mkdirSync(dir, { recursive: true })
+  const d = new Date()
+  const p2 = (n) => String(n).padStart(2, '0')
+  const name = `Voice-over ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}-${p2(d.getMinutes())}-${p2(d.getSeconds())}`
+  const webm = path.join(dir, name + '.webm')
+  const m4a = path.join(dir, name + '.m4a')
+  fs.writeFileSync(webm, Buffer.from(data))
+  await run(ffmpegPath, ['-y', '-v', 'error', '-i', webm, '-vn', '-c:a', 'aac', '-b:a', '192k', m4a])
+  fs.rmSync(webm, { force: true })
+  return m4a
+})
+ipcMain.handle('voice:folder', () => {
+  const dir = path.join(projectsDir(), 'Voice-overs')
+  fs.mkdirSync(dir, { recursive: true })
+  return shell.openPath(dir)
+})
 app.whenReady().then(setupUpdater)
 
 // Developer self-test: VIBE_SELFTEST=<script.js> VIBE_TEST_FILES=a;b runs the script inside the

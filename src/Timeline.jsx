@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { keyTimes } from './motion.js'
 import Icon from './Icon.jsx'
 import Wave from './Wave.jsx'
-import { layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKeys, audioSource, fmtTime, fmtDur, toUrl, uid, hasAttached, canGroup, canUngroup } from './state.js'
+import MiniMap from './MiniMap.jsx'
+import { srcAt, tlOf, speedOf, layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKeys, audioSource, fmtTime, fmtDur, toUrl, uid, hasAttached, canGroup, canUngroup, hasClipboard } from './state.js'
+import { labelColor } from './labels.js'
 
 const TRACK_PAD = 12
-const LABEL = 160
+const LABEL = 196
 const H_VIDEO = 76
 const H_AUDIO = 60
 
@@ -18,7 +20,7 @@ const groupColor = (g) => {
 
 // The left part of a row: a grip to drag the row up or down, the name (double-click to rename) and,
 // for audio rows, mute and volume.
-function RowLabel({ name, sub, volume, mute, onVolume, onMute, onRemove, onRename, onGrip }) {
+function RowLabel({ name, sub, volume, mute, onVolume, onMute, onRemove, onRename, onGrip, locked, hidden, onLock, onHide }) {
   const [edit, setEdit] = useState(false)
   const done = (v) => {
     setEdit(false)
@@ -48,6 +50,16 @@ function RowLabel({ name, sub, volume, mute, onVolume, onMute, onRemove, onRenam
             <Icon name={mute ? 'mute' : 'volume'} size={13} />
           </button>
         )}
+        {onHide && (
+          <button className={'mini' + (hidden ? ' on' : '')} title={hidden ? 'Show this track again' : 'Hide this track (not shown or exported, audio is silent)'} onClick={onHide}>
+            <Icon name={hidden ? 'eyeOff' : 'eye'} size={13} />
+          </button>
+        )}
+        {onLock && (
+          <button className={'mini' + (locked ? ' on' : '')} title={locked ? 'Unlock this track' : 'Lock this track so its clips cannot be changed'} onClick={onLock}>
+            <Icon name={locked ? 'lock' : 'unlock'} size={13} />
+          </button>
+        )}
         {onRemove && (
           <button className="mini" title="Remove this track" onClick={onRemove}><Icon name="x" size={12} /></button>
         )}
@@ -57,7 +69,7 @@ function RowLabel({ name, sub, volume, mute, onVolume, onMute, onRemove, onRenam
     </div>
   )
 }
-export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, freezeKey, groupKey, ungroupKey, onFreeze, onKeybinds }) {
+export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, freezeKey, groupKey, ungroupKey, onFreeze, onKeybinds, snapOn, setSnapOn, onCopy, fitRef, miniOn, setMiniOn, rec, onRecord }) {
   const scrollRef = useRef(null)
   const innerRef = useRef(null)
   const trackRef = useRef(null) // the ruler lane: reference for time <-> pixel conversion
@@ -67,6 +79,8 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
   const [marquee, setMarquee] = useState(null) // {x0,y0,x1,y1} in timeline-content pixels
   const [rowDrag, setRowDrag] = useState(null) // {key, to}: a track being dragged up or down
   const [showAdd, setShowAdd] = useState(false) // the 'Add track' popup
+  const [snapLine, setSnapLine] = useState(null) // time (s) of the snap guide while dragging
+  const [editMarker, setEditMarker] = useState(null) // id of the marker whose name is being typed
   const rowEls = useRef({})
   // the part of the timeline that is on screen (in lane pixels), so waveforms are only drawn there, sharp
   const [view, setView] = useState({ l: 0, r: 3000 })
@@ -122,6 +136,66 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
     }
     return i
   }
+  const locked = (k) => (state.lockedRows || []).includes(k)
+  const hiddenRow = (k) => (state.hiddenRows || []).includes(k)
+
+  // ---- snapping: while dragging, clip edges stick to other clips' edges, markers and the playhead
+  const snapPoints = (skip, withPlayhead = true) => {
+    const pts = [0, ...state.markers.filter((m) => m.id !== skipMarker.current).map((m) => m.t)]
+    if (withPlayhead) pts.push(state.playhead)
+    for (const c of [...clips, ...oclips, ...aclips]) if (!skip.has(c.id)) pts.push(c.start, c.start + c.dur)
+    return pts
+  }
+  // how many seconds to shift so that one of the edges lands on a snap point (0 when none is close)
+  const snapShift = (edges, skip, withPlayhead = true) => {
+    if (!snapOn) return 0
+    const thr = 9 / zoom
+    let best = null
+    for (const p of snapPoints(skip, withPlayhead)) for (const e of edges) if (Math.abs(p - e) <= thr && (!best || Math.abs(p - e) < Math.abs(best.d))) best = { d: p - e, p }
+    setSnapLine(best ? best.p : null)
+    return best ? best.d : 0
+  }
+  // rows for the overview strip
+  const miniRows = keys.map((k) => {
+    if (k === 'main') return { key: k, kind: 'v', items: clips.map((c) => ({ start: c.start, dur: c.dur })) }
+    if (k.startsWith('v:')) return { key: k, kind: 'v', items: oclips.filter((c) => c.trackId === k.slice(2)).map((c) => ({ start: c.start, dur: c.dur })) }
+    if (k.startsWith('s:')) return { key: k, kind: 'a', items: clips.filter((c) => hasAttached(c, mediaOf(c), +k.slice(2))).map((c) => ({ start: c.start, dur: c.dur })) }
+    return { key: k, kind: 'a', items: aclips.filter((c) => c.trackId === k.slice(2)).map((c) => ({ start: c.start, dur: c.dur })) }
+  })
+  const skipMarker = useRef(null)
+  // ---- markers: click = jump to it, drag = move it, double-click = name it
+  const startMarkerDrag = (e, m) => {
+    if (e.button !== 0 || e.target.closest('input, .marker-x')) return
+    e.stopPropagation()
+    e.preventDefault()
+    dispatch({ type: 'setPlayhead', t: m.t, user: true })
+    const x0 = e.clientX
+    let started = false
+    skipMarker.current = m.id
+    const move = (ev) => {
+      if (!started && Math.abs(ev.clientX - x0) < 3) return
+      started = true
+      let t = Math.max(0, m.t + (ev.clientX - x0) / zoom)
+      t = Math.max(0, t + snapShift([t], new Set()))
+      dispatch({ type: 'moveMarker', id: m.id, t })
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      skipMarker.current = null
+      setSnapLine(null)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  // zoom so the whole project fits on screen
+  const fit = () => {
+    const el = scrollRef.current
+    const w = el.clientWidth - LABEL - TRACK_PAD * 2 - 24
+    setZoom(Math.min(400, Math.max(0.2, w / Math.max(total, 1))))
+    el.scrollLeft = 0
+  }
+  if (fitRef) fitRef.current = fit
   const localX = (clientX) => clientX - trackRef.current.getBoundingClientRect().left - TRACK_PAD
 
   // Pointer-drag helper with edge auto-scroll. onMove(clientX, clientY) is called on every move and
@@ -171,12 +245,17 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
   // ---- playhead scrubbing on the ruler
   const scrub = (e) => {
     scrubbing.current = true
-    const apply = (x) => dispatch({ type: 'setPlayhead', t: Math.min(Math.max(0, localX(x) / zoom), total), user: true })
+    const apply = (x) => {
+      let t = Math.min(Math.max(0, localX(x) / zoom), total)
+      t = Math.max(0, t + snapShift([t], new Set(), false))
+      dispatch({ type: 'setPlayhead', t, user: true })
+    }
     apply(e.clientX)
     trackPointer(e, {
       onMove: (x) => apply(x),
       onEnd: () => {
         scrubbing.current = false
+        setSnapLine(null)
       },
     })
   }
@@ -219,6 +298,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
   // ---- drag a video clip body to reorder (the whole selection / group moves together)
   const startMove = (e, c) => {
     if (e.button !== 0) return
+    if (locked('main')) return void dispatch({ type: 'select', id: c.id })
     const mod = e.ctrlKey || e.shiftKey
     const wasSelected = sel.has(c.id)
     if (mod) dispatch({ type: 'select', id: c.id, additive: true })
@@ -253,7 +333,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
     e.stopPropagation()
     e.preventDefault()
     dispatch({ type: 'select', id: c.id })
-    dispatch({ type: 'setPlayhead', t: c.start + (t0 - c.in), user: true })
+    dispatch({ type: 'setPlayhead', t: tlOf(c, t0), user: true })
     const x0 = e.clientX
     let cur = t0
     let started = false
@@ -263,9 +343,9 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
         started = true
         dispatch({ type: 'checkpoint' })
       }
-      const nt = Math.min(c.out, Math.max(c.in, t0 + (ev.clientX - x0) / zoom))
+      const nt = Math.min(c.out, Math.max(c.in, srcAt(c, tlOf(c, t0) + (ev.clientX - x0) / zoom)))
       dispatch({ type: 'moveKeyframes', id: c.id, from: cur, to: nt })
-      dispatch({ type: 'setPlayhead', t: c.start + (nt - c.in), user: true })
+      dispatch({ type: 'setPlayhead', t: tlOf(c, nt), user: true })
       cur = nt
     }
     const up = () => {
@@ -281,10 +361,14 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
     e.stopPropagation()
     e.preventDefault()
     dispatch({ type: 'select', id: c.id })
+    if (locked('main')) return
     dispatch({ type: 'checkpoint' })
     const x0 = e.clientX
-    const base = side === 'in' ? c.in : c.out
-    const move = (ev) => dispatch({ type: 'trim', id: c.id, side, value: base + (ev.clientX - x0) / zoom })
+    const sp = speedOf(c)
+    const rev = !!c.reverse
+    const srcSide = side === 'in' ? (rev ? 'out' : 'in') : rev ? 'in' : 'out' // a reversed clip's left end is its source out point
+    const base = srcSide === 'in' ? c.in : c.out
+    const move = (ev) => dispatch({ type: 'trim', id: c.id, side: srcSide, value: base + (rev ? -1 : 1) * ((ev.clientX - x0) / zoom) * sp })
     const up = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
@@ -313,7 +397,9 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
       dispatch({ type: 'select', id: a.id })
       ids = a.groupId ? aclips.filter((x) => x.groupId === a.groupId).map((x) => x.id) : [a.id]
     }
-    const bases = aclips.filter((x) => ids.includes(x.id)).map((x) => ({ id: x.id, start: x.start }))
+    if (locked('a:' + a.trackId)) return
+    const bases = aclips.filter((x) => ids.includes(x.id)).map((x) => ({ id: x.id, start: x.start, dur: x.dur }))
+    const skip = new Set(bases.map((b) => b.id))
     const x0 = e.clientX
     let started = false
     const move = (ev) => {
@@ -322,15 +408,17 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
         started = true
         dispatch({ type: 'checkpoint' })
       }
-      const dt = (ev.clientX - x0) / zoom
+      let d = (ev.clientX - x0) / zoom
+      d += snapShift(bases.flatMap((b) => [b.start + d, b.start + d + b.dur]), skip)
       // keep the group together even if the earliest clip hits time 0
       const minStart = Math.min(...bases.map((b) => b.start))
-      const d = Math.max(dt, -minStart)
+      d = Math.max(d, -minStart)
       dispatch({ type: 'moveAudioBatch', moves: bases.map((b) => ({ id: b.id, start: b.start + d })) })
     }
     const up = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      setSnapLine(null)
       if (!started && wasSelected && !mod) dispatch({ type: 'select', id: a.id })
     }
     window.addEventListener('pointermove', move)
@@ -342,11 +430,17 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
     dispatch({ type: 'select', id: a.id })
     dispatch({ type: 'checkpoint' })
     const x0 = e.clientX
+    if (locked('a:' + a.trackId)) return
     const base = side === 'in' ? a.in : a.out
-    const move = (ev) => dispatch({ type: 'trimAudio', id: a.id, side, value: base + (ev.clientX - x0) / zoom })
+    const move = (ev) => {
+      let v = base + (ev.clientX - x0) / zoom
+      v += snapShift([a.start + (v - a.in)], new Set([a.id]))
+      dispatch({ type: 'trimAudio', id: a.id, side, value: v })
+    }
     const up = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      setSnapLine(null)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -366,7 +460,9 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
       dispatch({ type: 'select', id: c.id })
       ids = [c.id, ...groupIds(c.groupId)]
     }
-    const bases = [...oclips, ...aclips].filter((x) => ids.includes(x.id)).map((x) => ({ id: x.id, start: x.start, trackId: x.trackId }))
+    if (locked('v:' + c.trackId)) return
+    const bases = [...oclips, ...aclips].filter((x) => ids.includes(x.id)).map((x) => ({ id: x.id, start: x.start, dur: x.dur, trackId: x.trackId }))
+    const skip = new Set(bases.map((b) => b.id))
     const x0 = e.clientX
     let started = false
     const trackUnder = (y) => {
@@ -385,15 +481,17 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
         started = true
         dispatch({ type: 'checkpoint' })
       }
-      const dt = (ev.clientX - x0) / zoom
+      let d = (ev.clientX - x0) / zoom
+      d += snapShift(bases.flatMap((b) => [b.start + d, b.start + d + b.dur]), skip)
       const minStart = Math.min(...bases.map((b) => b.start))
-      const d = Math.max(dt, -minStart)
+      d = Math.max(d, -minStart)
       const tr = trackUnder(ev.clientY)
       dispatch({ type: 'moveItems', moves: bases.map((b) => ({ id: b.id, start: b.start + d, trackId: b.id === c.id ? tr || b.trackId : undefined })) })
     }
     const up = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      setSnapLine(null)
       if (!started && wasSelected && !mod) dispatch({ type: 'select', id: c.id })
     }
     window.addEventListener('pointermove', move)
@@ -405,11 +503,20 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
     dispatch({ type: 'select', id: c.id })
     dispatch({ type: 'checkpoint' })
     const x0 = e.clientX
-    const base = side === 'in' ? c.in : c.out
-    const move = (ev) => dispatch({ type: 'trimOverlay', id: c.id, side, value: base + (ev.clientX - x0) / zoom })
+    if (locked('v:' + c.trackId)) return
+    const sp = speedOf(c)
+    const rev = !!c.reverse
+    const srcSide = side === 'in' ? (rev ? 'out' : 'in') : rev ? 'in' : 'out'
+    const base = srcSide === 'in' ? c.in : c.out
+    const move = (ev) => {
+      let dt = (ev.clientX - x0) / zoom
+      dt += snapShift([side === 'in' ? c.start + dt : c.start + c.dur + dt], new Set([c.id]))
+      dispatch({ type: 'trimOverlay', id: c.id, side: srcSide, value: base + (rev ? -1 : 1) * dt * sp })
+    }
     const up = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      setSnapLine(null)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -477,7 +584,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
   const onWheel = (e) => {
     if (e.ctrlKey) {
       e.preventDefault()
-      setZoom((z) => Math.min(400, Math.max(10, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))))
+      setZoom((z) => Math.min(400, Math.max(0.2, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))))
     }
   }
 
@@ -511,14 +618,17 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
 
   // ---- the rows (tracks), in the order the user arranged them
   const rowClass = (key) => {
-    if (!rowDrag) return ''
-    if (rowDrag.key === key) return ' row-dragging'
+    const flags = (locked(key) ? ' locked' : '') + (hiddenRow(key) ? ' hidden' : '')
+    if (!rowDrag) return flags
+    if (rowDrag.key === key) return flags + ' row-dragging'
     const others = keys.filter((k) => k !== rowDrag.key)
     const at = others.indexOf(key)
-    if (at === rowDrag.to) return ' drop-above'
-    if (rowDrag.to >= others.length && at === others.length - 1) return ' drop-below'
-    return ''
+    if (at === rowDrag.to) return flags + ' drop-above'
+    if (rowDrag.to >= others.length && at === others.length - 1) return flags + ' drop-below'
+    return flags
   }
+  // the props every row label needs for locking and hiding
+  const rowFlags = (key) => ({ locked: locked(key), hidden: hiddenRow(key), onLock: () => dispatch({ type: 'toggleRowLock', key }), onHide: () => dispatch({ type: 'toggleRowHide', key }) })
   const rowRef = (key) => (el) => {
     if (el) rowEls.current[key] = el
     else delete rowEls.current[key]
@@ -526,7 +636,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
 
   const renderMain = (key) => (
     <div className={'tl-row' + rowClass(key)} key={key} ref={rowRef(key)} style={{ height: H_VIDEO }}>
-      <RowLabel name={state.mainName} onRename={(name) => dispatch({ type: 'renameRow', key, name })} onGrip={(e) => startRowDrag(e, key)} />
+      <RowLabel name={state.mainName} onRename={(name) => dispatch({ type: 'renameRow', key, name })} onGrip={(e) => startRowDrag(e, key)} {...rowFlags(key)} />
       <div className="lane" onDragOver={onVideoDragOver} onDragLeave={() => setDropIdx(null)} onDrop={onVideoDrop}>
         <div className="lane-inner" style={{ left: TRACK_PAD }}>
           {clips.map((c) => {
@@ -546,6 +656,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                   transform: dragging ? `translateX(${drag.dx}px)` : undefined,
                   backgroundImage: m.thumb ? `url("${toUrl(m.thumb)}")` : undefined,
                   '--gcol': c.groupId ? groupColor(c.groupId) : undefined,
+                  '--lbl': labelColor(c),
                 }}
                 onPointerDown={(e) => startMove(e, c)}
               >
@@ -557,7 +668,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                 {keyTimes(c)
                   .filter((t) => t >= c.in - 0.001 && t <= c.out + 0.001)
                   .map((t) => (
-                    <div key={t.toFixed(3)} className="kf" style={{ left: (t - c.in) * zoom }} onPointerDown={(e) => startKfDrag(e, c, t)} title="Keyframe: click to jump to it, drag to move it" />
+                    <div key={t.toFixed(3)} className="kf" style={{ left: (tlOf(c, t) - c.start) * zoom }} onPointerDown={(e) => startKfDrag(e, c, t)} title="Keyframe: click to jump to it, drag to move it" />
                   ))}
                 <div className="handle left" onPointerDown={(e) => startTrim(e, c, 'in')} />
                 <span className="clip-name">{c.groupId && <Icon name="link" size={11} />}{m.name}</span>
@@ -583,13 +694,14 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
           onRename={(name) => dispatch({ type: 'renameRow', key, name })}
           onGrip={(e) => startRowDrag(e, key)}
           onRemove={() => dispatch({ type: 'removeVideoTrack', id: tr.id })}
+          {...rowFlags(key)}
         />
         <div className="lane" onDragOver={(e) => hasMedia(e) && e.preventDefault()} onDrop={(e) => onOverlayDrop(e, tr.id)}>
           <div className="lane-inner" style={{ left: TRACK_PAD }}>
             {oclips
               .filter((c) => c.trackId === tr.id)
               .map((c) => {
-                const m = mediaOf(c)
+                const m = c.text ? { type: 'text', name: c.text.content, thumb: null } : mediaOf(c)
                 if (!m) return null
                 return (
                   <div
@@ -601,13 +713,14 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                       width: Math.max(4, c.dur * zoom),
                       backgroundImage: m.thumb ? `url("${toUrl(m.thumb)}")` : undefined,
                       '--gcol': c.groupId ? groupColor(c.groupId) : undefined,
+                  '--lbl': labelColor(c),
                     }}
                     onPointerDown={(e) => startMoveOverlay(e, c)}
                   >
                     {keyTimes(c)
                       .filter((t) => t >= c.in - 0.001 && t <= c.out + 0.001)
                       .map((t) => (
-                        <div key={t.toFixed(3)} className="kf" style={{ left: (t - c.in) * zoom }} onPointerDown={(e) => startKfDrag(e, c, t)} title="Keyframe: click to jump to it, drag to move it" />
+                        <div key={t.toFixed(3)} className="kf" style={{ left: (tlOf(c, t) - c.start) * zoom }} onPointerDown={(e) => startKfDrag(e, c, t)} title="Keyframe: click to jump to it, drag to move it" />
                       ))}
                     <div className="handle left" onPointerDown={(e) => startTrimOverlay(e, c, 'in')} />
                     <span className="clip-name">{c.groupId && <Icon name="link" size={11} />}{m.name}</span>
@@ -636,6 +749,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
           onMute={() => dispatch({ type: 'setStream', n, patch: { mute: !st.mute } })}
           onRename={(name) => dispatch({ type: 'renameRow', key, name })}
           onGrip={(e) => startRowDrag(e, key)}
+          {...rowFlags(key)}
         />
         <div className="lane">
           <div className="lane-inner" style={{ left: TRACK_PAD }}>
@@ -676,6 +790,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
           onRemove={() => dispatch({ type: 'removeAudioTrack', id: t.id })}
           onRename={(name) => dispatch({ type: 'renameRow', key, name })}
           onGrip={(e) => startRowDrag(e, key)}
+          {...rowFlags(key)}
         />
         <div className="lane" onDragOver={(e) => hasMedia(e) && e.preventDefault()} onDrop={(e) => onAudioDrop(e, t.id)}>
           <div className="lane-inner" style={{ left: TRACK_PAD }}>
@@ -688,7 +803,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                     key={a.id}
                     data-sel={a.id}
                     className={'aclip' + (a.stream != null ? ' detached' : ' free') + (t.mute ? ' muted' : '') + (sel.has(a.id) ? ' selected' : '') + (a.groupId ? ' grouped' : '')}
-                    style={{ left: a.start * zoom, width: Math.max(6, a.dur * zoom), '--gcol': a.groupId ? groupColor(a.groupId) : undefined }}
+                    style={{ left: a.start * zoom, width: Math.max(6, a.dur * zoom), '--gcol': a.groupId ? groupColor(a.groupId) : undefined, '--lbl': labelColor(a) }}
                     onPointerDown={(e) => startMoveAudio(e, a)}
                     title={clipAudioName(a)}
                   >
@@ -715,37 +830,58 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
   return (
     <div className="timeline">
       <div className="tl-toolbar">
-        <button onClick={() => dispatch({ type: 'split', t: state.playhead })} title="Split at playhead">
-          <Icon name="scissors" /> Split{splitKey ? ` (${splitKey})` : ''}
+        <button onClick={() => dispatch({ type: 'split', t: state.playhead })} title={'Split at the playhead' + (splitKey ? ' (' + splitKey + ')' : '')}>
+          <Icon name="scissors" /> Split
         </button>
-        <button onClick={onFreeze} title="Save the frame under the playhead as an image and insert it (you can then stretch it)">
-          <Icon name="snowflake" /> Freeze frame{freezeKey ? ` (${freezeKey})` : ''}
+        <button onClick={onFreeze} title={'Save the frame under the playhead as an image and insert it (you can then stretch it)' + (freezeKey ? ' (' + freezeKey + ')' : '')}>
+          <Icon name="snowflake" /> Freeze
         </button>
         <button disabled={!groupOk} onClick={() => dispatch({ type: 'group' })} title="Group the selected clips so they move together. Detached audio in the selection is attached back to its video.">
-          <Icon name="link" /> Group{groupKey ? ` (${groupKey})` : ''}
+          <Icon name="link" /> Group
         </button>
         <button disabled={!ungroupOk} onClick={() => dispatch({ type: 'ungroup' })} title="Break up the selected group. With no group selected: detach the selected audio (or all the audio of a selected video clip) so it can be moved, trimmed or deleted on its own.">
-          <Icon name="unlink" /> Ungroup{ungroupKey ? ` (${ungroupKey})` : ''}
+          <Icon name="unlink" /> Ungroup
         </button>
         <button disabled={!state.selection.length} onClick={() => dispatch({ type: 'deleteSelection' })} title="Delete selected (Del)">
           <Icon name="trash" /> Delete
         </button>
         <button disabled={!state.past.length} onClick={() => dispatch({ type: 'undo' })} title="Ctrl+Z">
-          <Icon name="undo" /> Undo
+          <Icon name="undo" />
         </button>
         <button disabled={!state.future.length} onClick={() => dispatch({ type: 'redo' })} title="Ctrl+Y">
-          <Icon name="redo" /> Redo
+          <Icon name="redo" />
         </button>
         <button onClick={() => setShowAdd(true)} title="Add an overlay video track or an audio track">
           <Icon name="plus" size={13} /> Add track
         </button>
-        <span className="spacer" />
-        <button onClick={onKeybinds}>
-          <Icon name="keyboard" /> Shortcuts
+        <button onClick={() => dispatch({ type: 'addText', t: state.playhead })} title="Add text or a title at the playhead (T)">
+          <Icon name="type" size={13} /> Text
         </button>
-        <label className="zoom">
-          Zoom
-          <input type="range" min="10" max="400" value={zoom} onChange={(e) => setZoom(+e.target.value)} />
+        <button className={'rec-btn' + (rec ? ' on' : '')} disabled={rec && rec.phase === 'saving'} onClick={onRecord} title="Record a voice-over from your microphone while the video plays (R). Use headphones so the microphone does not hear the project's sound.">
+          <Icon name="mic" size={13} />{' '}
+          {!rec ? '' : rec.phase === 'count' ? 'Starting in ' + rec.n + '…' : rec.phase === 'saving' ? 'Saving…' : 'Stop ' + fmtTime((performance.now() - rec.t0) / 1000).slice(0, 5)}
+        </button>
+        <button disabled={!state.selection.length} onClick={onCopy} title="Copy the selected clips (Ctrl+C)"><Icon name="copy" size={13} /></button>
+        <button disabled={!hasClipboard()} onClick={() => dispatch({ type: 'paste', t: state.playhead })} title="Paste at the playhead (Ctrl+V)"><Icon name="paste" size={13} /></button>
+        <button disabled={!state.selection.length} onClick={() => dispatch({ type: 'duplicate' })} title="Duplicate the selected clips (Ctrl+D)"><Icon name="duplicate" size={13} /></button>
+        <button onClick={() => dispatch({ type: 'addMarker', t: state.playhead })} title="Put a marker at the playhead (M)">
+          <Icon name="flag" size={13} />
+        </button>
+        <button className={snapOn ? 'on' : ''} onClick={() => setSnapOn(!snapOn)} title="Snapping: clips and the playhead stick to edges and markers (N)">
+          <Icon name="magnet" size={13} />
+        </button>
+        <button onClick={fit} title="Zoom so the whole project fits (Shift+F)">
+          <Icon name="fit" size={13} />
+        </button>
+        <button className={miniOn ? 'on' : ''} onClick={() => setMiniOn(!miniOn)} title="Show or hide the mini timeline (an overview of the whole project under the timeline)">
+          <Icon name="map" size={13} />
+        </button>
+        <span className="spacer" />
+        <button onClick={onKeybinds} title="Keyboard shortcuts">
+          <Icon name="keyboard" />
+        </button>
+        <label className="zoom" title="Zoom the timeline in and out">
+          <input type="range" min="0" max="100" value={Math.round((100 * Math.log(Math.max(zoom, 0.2) / 0.2)) / Math.log(2000))} onChange={(e) => setZoom(0.2 * Math.pow(2000, +e.target.value / 100))} />
         </label>
       </div>
 
@@ -762,12 +898,37 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                   </div>
                 ))}
                 <div className="ruler-knob" style={{ left: Math.min(state.playhead, total + 15) * zoom }} />
+                {state.markers.map((m) => (
+                  <div key={m.id} className="marker" style={{ left: m.t * zoom }} onPointerDown={(e) => startMarkerDrag(e, m)} onDoubleClick={() => setEditMarker(m.id)} title="Marker: click to jump, drag to move, double-click to name it">
+                    <Icon name="flag" size={12} />
+                    {editMarker === m.id ? (
+                      <input
+                        autoFocus
+                        defaultValue={m.label}
+                        onBlur={(e) => {
+                          dispatch({ type: 'renameMarker', id: m.id, label: e.target.value })
+                          setEditMarker(null)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === 'Escape') e.target.blur()
+                        }}
+                      />
+                    ) : (
+                      m.label && <span>{m.label}</span>
+                    )}
+                    <button className="marker-x" onClick={() => dispatch({ type: 'removeMarker', id: m.id })} title="Remove this marker">×</button>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
           {keys.map(renderRow)}
 
+          {state.markers.map((m) => (
+            <div key={'ml' + m.id} className="marker-line" style={{ left: LABEL + TRACK_PAD + m.t * zoom }} />
+          ))}
+          {snapLine != null && <div className="snap-line" style={{ left: LABEL + TRACK_PAD + snapLine * zoom }} />}
           <div className="playhead" style={{ left: LABEL + TRACK_PAD + Math.min(state.playhead, total + 15) * zoom }} />
           {marquee && (
             <div
@@ -782,6 +943,8 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
           )}
         </div>
       </div>
+
+      {miniOn && <MiniMap rows={miniRows} markers={state.markers} total={total} playhead={state.playhead} zoom={zoom} scrollRef={scrollRef} labelW={LABEL} pad={TRACK_PAD} />}
 
       {showAdd && (
         <div className="modal-bg" onPointerDown={() => setShowAdd(false)}>

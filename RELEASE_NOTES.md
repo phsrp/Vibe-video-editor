@@ -1,7 +1,6 @@
-- BIG UPDATE: Export now has its own tab, so you can keep editing and watch your video being made
-- Graphics card encoding (NVIDIA, AMD or Intel) for much faster H.265 exports, plus MP4/MKV/MOV and audio quality options
-- New Library panel for the videos, images and sounds you use a lot (Documents > Vibe Video Editor Library)
-- Inspector sections fold open and closed, and the timeline scroll bar is bigger
-- Fixed: the preview no longer blinks when you pause, and the Home Projects folder button works
-- The Export shortcut (Ctrl+E) is gone, since Export is a tab now
-- README and all screenshots refreshed
+- BIG UPDATE: the biggest one yet, with 19 new features
+- New: text and titles, masks (rectangle, ellipse, freehand loop) and Smart select: an AI that finds a subject's exact edges (download the model once, the button is greyed out until then)
+- New: Colour tab with an Apply button, speed and reverse, blur / sharpen / vignette / glow and green-screen (chroma key)
+- New: vertical, square and other video shapes, export presets, sound-only export, loudness normalising and voice-over recording
+- New: snapping, markers, copy / paste / duplicate, lock and hide tracks, colour labels, zoom to fit and an optional mini timeline
+- New: version history, to bring back an earlier copy of a project

@@ -43,6 +43,10 @@
 
 ![Export tab](docs/screenshots/export.png)
 
+**Colour tab.** Colour correction with a live preview. Nothing reaches the clip until you press Apply.
+
+![The Colour tab](docs/screenshots/colour.png)
+
 **Library.** Keep the videos, images and sounds you use again and again (an intro, a logo, music, sound effects) in one folder and use them from any project.
 
 ![Library panel](docs/screenshots/library.png)
@@ -67,6 +71,32 @@
 - **Hide panels:** the Media, Library and Inspector panels can be folded away to give the preview more room.
 - **Bigger timeline scroll bar:** easy to grab when you are scrolling through a long recording.
 - **Smooth pause:** pausing the preview keeps the picture on screen instead of flashing.
+### Titles, text and masks
+- **Text and titles:** press **Text** (or `T`) to add text at the playhead. Pick a font, size, colour, outline, shadow or background box, and how it appears and disappears (fade, pop, slide up, typewriter). Quick looks: Title, Subtitle, Lower third, Neon and Typed. Text moves, scales, rotates and animates with keyframes like any clip.
+- **Masks:** show only part of a clip with a **rectangle**, an **ellipse**, or a shape you **draw freehand around a subject** (a lasso). Add a soft edge, grow or shrink it, or invert it. The mask has its own Mask X / Y / size keyframes, so it can follow a subject that moves.
+- **Smart select (AI):** draw a loose loop around a subject and an AI model finds its exact edges (on the frame you are looking at), turning it into a mask. It runs on your own PC, with no account and no internet once the model is downloaded. The button is **greyed out until you download the model** (about 45 MB, a one-time download from the Mask section of the Inspector). It works best on a clear subject; for a subject that moves, use the Mask X / Y keyframes to follow it.
+
+![Smart select cutting a subject out of its background](docs/screenshots/smart-mask.png)
+
+- **Subject in front of text:** with a mask on a clip, press **Subject in front of text** and the editor puts a masked copy of the clip on a new track at the top. Put your text on a track below it and the subject stands in front of the words.
+
+### Effects, colour and speed
+- **Effects:** blur, sharpen, vignette (dark edges) and glow, and **chroma key** (green screen) with a colour picker, strength, soft edge and spill removal.
+- **Colour correction has its own tab:** exposure, brightness, contrast, saturation, temperature, tint, highlights and shadows, with looks like Warm, Cool, Black and white, Vivid, Faded and Moody. You see the changes in the tab first (hold a button to compare with the original) and they only reach the clip and the export when you press **Apply**.
+- **Speed and reverse:** slow motion and fast forward from 0.1× to 8× (the sound keeps its pitch), and play a clip **backwards**. Reversed clips take a moment to prepare for the preview; the export has the reversed sound too.
+- **Vertical and square videos:** the shape next to the project name switches between Landscape 16:9, Vertical 9:16, Square 1:1, Portrait 4:5, Classic 4:3 and Cinema 21:9. Preview and export follow it, and a **Fill the frame** button crops a clip to cover it.
+
+### Timeline tools
+- **Snapping:** clips, the playhead and markers click onto each other's edges while you drag (the magnet button, or `N`).
+- **Markers:** flags on the ruler (`M`). Click to jump, drag to move, double-click to name them.
+- **Copy, paste and duplicate** (`Ctrl+C`, `Ctrl+V`, `Ctrl+D`), including keyframes, effects and groups.
+- **Lock and hide tracks:** lock a track so its clips cannot be changed, or hide it so it is not shown or exported (a hidden audio track is silent).
+- **Colour labels:** a coloured stripe on clips, to find things at a glance.
+- **Zoom to fit** (`Shift+F`) and an optional **mini timeline**: an overview of the whole project under the timeline, that you can turn on or off (off by default).
+- **Voice-over:** press **Record** (`R`), count down from 3, speak while the video plays, then press it again. The recording lands on a "Voice-over" track at the playhead and is kept in Documents > Vibe Video Editor Projects > Voice-overs.
+- **Loudness:** select an audio clip and press **Normalise loudness** to match a target (-14 LUFS for YouTube, -16 for podcasts, -23 for TV), or normalise the whole export.
+- **Version history:** the **History** button lists earlier copies of the project (kept when you save and every few minutes). Open one as a new project, or restore it here.
+
 ### Library
 - The **Library** panel (next to the Media panel; it starts folded away, click **Library** to open it) shows everything in **Documents > Vibe Video Editor Library**.
 - Drag an item onto the timeline, or double-click it to add it. Videos, images and audio files all work, and they are only added to a project when you use them.
@@ -123,6 +153,9 @@ Every keyframe can have its own easing, and the **Funny warp** keyframes have th
 - **Watch it render:** the right side shows the video as it is being made. Effects (transitions, motion, overlays) show frame by frame, then a live preview of the final encode.
 - **1080p, 2K or 4K**, **24, 30 or 60 fps**, **H.264 or H.265**, adjustable **bitrate**, and a speed/quality setting.
 - **Graphics card encoding:** choose **NVIDIA (NVENC)**, **AMD (AMF)** or **Intel (Quick Sync)** as the encoder to let your graphics card do the video encoding. It needs a graphics card with a video encoder (an NVIDIA GeForce GTX 600 or newer or any RTX, an AMD Radeon RX 400 or newer, or Intel built-in graphics from the 2nd generation Core on) and up-to-date drivers. The Export tab tells you which graphics card it found and only lets you pick the ones that really work. In a test on an NVIDIA RTX 4080 SUPER, a 6-minute 2K clip exported about 4 to 5 times faster as H.265 and 10 to 40% faster as H.264. The processor option works on every PC.
+- **Presets:** one click for YouTube 1080p or 4K, TikTok / Reels / Shorts, Instagram square and portrait, small files under 10 MB or 25 MB (the bitrate is worked out for you), a 4K master, or a quick draft.
+- **Sound only:** make an MP3, M4A or WAV file instead of a video.
+- **Loudness:** optionally normalise the whole sound to -14, -16 or -23 LUFS.
 - **File type:** MP4, MKV or MOV. **Audio quality:** 128, 192, 256 or 320 kbps.
 - Mix all audio into one track, or **keep every track separate** in the file.
 - Progress bar with time so far and an estimate of the time left, and a Cancel button.
@@ -159,6 +192,10 @@ Every shortcut can be changed under **⌨ Shortcuts** in the timeline toolbar.
 | Action | Default |
 |---|---|
 | Split at the playhead | `S` |
+| Add text | `T` |
+| Record a voice-over | `R` |
+| Marker / Snapping / Zoom to fit | `M` / `N` / `Shift+F` |
+| Copy / Paste / Duplicate | `Ctrl+C` / `Ctrl+V` / `Ctrl+D` |
 | Freeze frame | `F` |
 | Play / pause | `Space` |
 | Step one frame back / forward | `←` / `→` |
@@ -174,6 +211,9 @@ Every shortcut can be changed under **⌨ Shortcuts** in the timeline toolbar.
 | What | Where |
 |---|---|
 | Your projects | **Documents\Vibe Video Editor Projects** by default (or wherever you chose when saving the `.json` file). The **Projects folder** button on the Home page opens it |
+| Voice-over recordings | **Documents\Vibe Video Editor Projects\Voice-overs** |
+| Version history copies | `%APPDATA%\vibe-video-editor\history` |
+| The AI model for smart select (after you download it) | `%APPDATA%\vibe-video-editor\models` |
 | Your library (videos, images and sounds you reuse) | **Documents\Vibe Video Editor Library**. The **Open library folder** button in the Library panel opens it |
 | Recovery copies of projects you have not saved yet | `%APPDATA%\vibe-video-editor\autosave` (they reopen by themselves) |
 | Settings, recent projects, caches | `%APPDATA%\vibe-video-editor` |
@@ -198,6 +238,8 @@ Releases are built automatically by GitHub when a version tag such as `v1.0.1` i
 - Transition format from [gl-transitions](https://gl-transitions.com/)
 - [Montserrat](https://github.com/JulietaUla/Montserrat) font (SIL Open Font License)
 - [Rosé Pine](https://rosepinetheme.com/) colours (MIT)
+- [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) (Apache-2.0), converted to ONNX by Acly ([Hugging Face](https://huggingface.co/Acly/MobileSAM), MIT), for the smart select. It is downloaded on request, not included in the installer.
+- [ONNX Runtime Web](https://onnxruntime.ai/) (MIT) to run that model on your PC
 - Icons drawn in the style of [Lucide](https://lucide.dev/) (ISC)
 
 ## License

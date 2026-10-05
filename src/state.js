@@ -1,3 +1,5 @@
+import { TEXT_DEFAULTS } from './textRender.js'
+import { MASK_DEFAULT } from './masks.js'
 import { evalTransform, evalProp, evalWarp, hasTransform, keyAt, PROPS, DEFAULTS, DEFAULT_EASE, KEY_EPS, WARP_ZERO } from './motion.js'
 
 export const uid = () => Math.random().toString(36).slice(2, 9)
@@ -24,6 +26,10 @@ export const initialState = {
   // Vertical order of every row of the timeline (top to bottom): 'main', 'v:<trackId>', 's:<stream>', 'a:<trackId>'.
   // Rows that are not listed yet are placed by rowKeys(). Video rows higher up are drawn on top.
   rowOrder: [],
+  aspect: '16:9', // the shape of the video: see ASPECTS
+  markers: [], // {id, t, label}: flags on the timeline ruler
+  lockedRows: [], // row keys that cannot be edited
+  hiddenRows: [], // row keys that are switched off (video: not shown or exported, audio: silent)
   past: [],
   future: [],
   // Selected items: video clip ids, audio clip ids, or 'sa:<videoClipId>:<stream>' for one attached audio stream.
@@ -35,11 +41,32 @@ export const initialState = {
 
 // Adds start/dur/ov to every clip. Clips are rippled (no gaps). A clip with `transition`
 // overlaps the tail of the previous clip by `ov` seconds (limited by the clips' lengths).
+// Speed and reverse. A clip plays its source from `in` to `out` (seconds in the original file). With `speed`
+// the clip lasts (out - in) / speed on the timeline; with `reverse` it plays from `out` back to `in`.
+export const speedOf = (c) => (c && c.speed > 0 ? c.speed : 1)
+// the second of the original file that is on screen at project time t
+export function srcAt(c, t) {
+  const sp = speedOf(c)
+  const rel = Math.max(0, Math.min(t - c.start, (c.out - c.in) / sp)) * sp
+  return c.reverse ? c.out - rel : c.in + rel
+}
+// the project time at which second s of the original file is on screen
+export function tlOf(c, s) {
+  return c.start + (c.reverse ? c.out - s : s - c.in) / speedOf(c)
+}
+// how long an item lasts on the timeline
+export const lenOf = (c) => (c.out - c.in) / speedOf(c)
+// splitting at project time t: which source range each half keeps (first = earlier on the timeline)
+function splitRanges(c, t) {
+  const s = srcAt(c, t)
+  return c.reverse ? { first: { in: s }, second: { out: s } } : { first: { out: s }, second: { in: s } }
+}
+
 export function layout(clips) {
   const out = []
   let end = 0
   clips.forEach((c, i) => {
-    const dur = c.out - c.in
+    const dur = (c.out - c.in) / speedOf(c)
     let ov = 0
     if (i > 0 && c.transition && c.transition.name) {
       const prev = out[i - 1]
@@ -59,12 +86,12 @@ export function totalDuration(clips) {
 }
 
 export const audioLayout = (audioClips) => audioClips.map((a) => ({ ...a, dur: a.out - a.in }))
-export const overlayLayout = (overlayClips) => overlayClips.map((c) => ({ ...c, dur: c.out - c.in, ov: 0 }))
+export const overlayLayout = (overlayClips) => overlayClips.map((c) => ({ ...c, dur: lenOf(c), ov: 0 }))
 
 // Length of the whole project: the main video, or an overlay clip that runs past it.
 export function projectDuration(state) {
   let end = totalDuration(state.clips)
-  for (const c of state.overlayClips || []) end = Math.max(end, c.start + (c.out - c.in))
+  for (const c of state.overlayClips || []) end = Math.max(end, c.start + lenOf(c))
   return end
 }
 
@@ -81,6 +108,33 @@ export function rowKeys(state) {
   }
   return out
 }
+// The shapes a project can have (landscape, vertical, square...). ratio = width / height.
+export const ASPECTS = [
+  { id: '16:9', label: 'Landscape 16:9', ratio: 16 / 9 },
+  { id: '9:16', label: 'Vertical 9:16', ratio: 9 / 16 },
+  { id: '1:1', label: 'Square 1:1', ratio: 1 },
+  { id: '4:5', label: 'Portrait 4:5', ratio: 4 / 5 },
+  { id: '4:3', label: 'Classic 4:3', ratio: 4 / 3 },
+  { id: '21:9', label: 'Cinema 21:9', ratio: 21 / 9 },
+]
+export const aspectRatio = (state) => (ASPECTS.find((x) => x.id === state.aspect) || ASPECTS[0]).ratio
+// the size of the preview picture in pixels for a shape (the longest side is about 1280)
+export function previewSize(ratio) {
+  return ratio >= 1 ? [1280, Math.round(1280 / ratio / 2) * 2] : [Math.round((1280 * ratio) / 2) * 2, 1280]
+}
+
+// Which timeline row an item lives on ('main', 'v:<track>', 'a:<track>' or 's:<stream>'), for locking and hiding
+export function rowOfItem(state, id) {
+  if (id.startsWith('sa:')) return 's:' + id.split(':')[2]
+  if (state.clips.some((c) => c.id === id)) return 'main'
+  const o = state.overlayClips.find((c) => c.id === id)
+  if (o) return 'v:' + o.trackId
+  const a = state.audioClips.find((c) => c.id === id)
+  if (a) return 'a:' + a.trackId
+  return null
+}
+export const isLocked = (state, id) => (state.lockedRows || []).includes(rowOfItem(state, id))
+
 // The one video clip (main or overlay) that is selected, if there is exactly one. Its grouped audio may
 // be selected along with it: that still counts as "one clip" for the Inspector and the warp handles.
 export function soleVideoClip(state) {
@@ -172,10 +226,83 @@ function expand(state, ids) {
   return [...out]
 }
 
-const newClip = (c, patch) => ({ id: c.id, mediaId: c.mediaId, in: c.in, out: c.out, transition: c.transition || null, noAudio: c.noAudio || [], groupId: c.groupId, tf: c.tf, anim: c.anim, warp: c.warp, ...patch })
+// a copy of a clip (without its derived start / dur / ov), with some fields changed
+const newClip = (c, patch) => {
+  const { start, dur, ov, ...rest } = c
+  return { ...rest, transition: c.transition || null, noAudio: c.noAudio || [], ...patch }
+}
 
 const sortKeys = (list) => [...list].sort((a, b) => a.t - b.t)
 
+
+// ---- copy / paste / duplicate helpers
+let clipboard = null // {main:[], over:[], aud:[]} copies of the clips that were copied
+const stripDerived = (c) => {
+  const { start, dur, ov, ...rest } = c
+  return JSON.parse(JSON.stringify(rest))
+}
+export function cloneSelection(state, ids) {
+  const set = new Set(ids.filter((x) => !x.startsWith('sa:')))
+  return {
+    main: layout(state.clips).filter((c) => set.has(c.id)).map(stripDerived),
+    over: overlayLayout(state.overlayClips).filter((c) => set.has(c.id)).map((c) => ({ ...stripDerived(c), start: c.start })),
+    aud: audioLayout(state.audioClips).filter((c) => set.has(c.id)).map((c) => ({ ...stripDerived(c), start: c.start })),
+  }
+}
+// Ctrl+C: returns how many clips were copied
+export function copySelection(state) {
+  const cb = cloneSelection(state, state.selection)
+  const n = cb.main.length + cb.over.length + cb.aud.length
+  if (n) clipboard = cb
+  return n
+}
+export const hasClipboard = () => !!clipboard
+
+// Puts copies of the clipboard clips into the project. t = where (seconds), or null to put each copy right after
+// the originals (duplicate). New ids, groups are kept as groups.
+function pasteItems(state, cb, t) {
+  const gmap = new Map()
+  const gid = (g) => {
+    if (!g) return undefined
+    if (!gmap.has(g)) gmap.set(g, uid())
+    return gmap.get(g)
+  }
+  const idmap = new Map()
+  const fresh = (c) => {
+    const id = uid()
+    idmap.set(c.id, id)
+    return { ...c, id, groupId: gid(c.groupId) }
+  }
+  // main track: the copies go after the last original (duplicate) or at the playhead
+  const lay = layout(state.clips)
+  let at
+  if (t == null) {
+    const last = Math.max(-1, ...cb.main.map((c) => lay.findIndex((x) => x.id === c.id)))
+    at = last + 1
+  } else {
+    at = lay.filter((c) => c.start + c.dur / 2 < t).length
+  }
+  const mainCopies = cb.main.map((c, i) => ({ ...fresh(c), transition: i === 0 ? null : c.transition }))
+  const clips = [...state.clips.slice(0, at), ...mainCopies, ...state.clips.slice(at)]
+  // overlay and audio: same tracks, shifted in time
+  const timed = [...cb.over, ...cb.aud]
+  let offset = 0
+  if (timed.length) {
+    const base = Math.min(...timed.map((c) => c.start))
+    if (t == null) offset = Math.max(...timed.map((c) => c.start + lenOf(c))) - base
+    else offset = t - base
+  }
+  const overCopies = cb.over.map((c) => ({ ...fresh(c), start: Math.max(0, c.start + offset) }))
+  const audCopies = cb.aud.map((c) => {
+    const n = fresh(c)
+    return { ...n, start: Math.max(0, c.start + offset), origin: c.origin && idmap.has(c.origin) ? idmap.get(c.origin) : undefined }
+  })
+  const out = {
+    ...commit(state, { clips, overlayClips: [...state.overlayClips, ...overCopies], audioClips: [...state.audioClips, ...audCopies] }),
+    selection: [...mainCopies, ...overCopies, ...audCopies].map((c) => c.id),
+  }
+  return ensureTracks(out)
+}
 export function reducer(state, a) {
   switch (a.type) {
     case 'addMedia': {
@@ -196,6 +323,10 @@ export function reducer(state, a) {
         videoTracks: a.videoTracks || [],
         mainName: a.mainName || 'Video 1',
         rowOrder: a.rowOrder || [],
+        aspect: a.aspect || '16:9',
+        markers: a.markers || [],
+        lockedRows: a.lockedRows || [],
+        hiddenRows: a.hiddenRows || [],
       }
 
     case 'updateMedia':
@@ -249,13 +380,13 @@ export function reducer(state, a) {
 
     case 'split': {
       // a selected overlay clip under the playhead is split instead of the main video (its grouped audio too)
-      const ol = overlayLayout(state.overlayClips).find((x) => state.selection.includes(x.id) && a.t > x.start + MIN_CLIP && a.t < x.start + x.dur - MIN_CLIP)
+      const ol = overlayLayout(state.overlayClips).find((x) => state.selection.includes(x.id) && !isLocked(state, x.id) && a.t > x.start + MIN_CLIP && a.t < x.start + x.dur - MIN_CLIP)
       if (ol) {
-        const cut = ol.in + (a.t - ol.start)
-        const left = { ...ol, out: cut }
+        const sr = splitRanges(ol, a.t)
+        const left = { ...ol, ...sr.first }
         const rightId = uid()
         const gid = ol.groupId ? uid() : undefined
-        const right = { ...ol, id: rightId, in: cut, start: a.t, groupId: gid }
+        const right = { ...ol, ...sr.second, id: rightId, start: a.t, groupId: gid }
         delete left.dur
         delete left.ov
         delete right.dur
@@ -271,12 +402,13 @@ export function reducer(state, a) {
         }
         return { ...commit(state, { overlayClips, audioClips }), selection: [rightId] }
       }
+      if ((state.lockedRows || []).includes('main')) return state
       const l = layout(state.clips)
       const c = l.find((x) => a.t > x.start + MIN_CLIP && a.t < x.start + x.dur - MIN_CLIP)
       if (!c) return state
-      const cut = c.in + (a.t - c.start)
-      const left = newClip(c, { out: cut })
-      const right = newClip(c, { id: uid(), in: cut, transition: null })
+      const sr = splitRanges(c, a.t)
+      const left = newClip(c, sr.first)
+      const right = newClip(c, { ...sr.second, id: uid(), transition: null })
       const clips = state.clips.flatMap((x) => (x.id === c.id ? [left, right] : [x]))
       return { ...commit(state, { clips }), selection: [right.id] }
     }
@@ -290,7 +422,7 @@ export function reducer(state, a) {
       const c = hit.length ? hit[hit.length - 1] : l[l.length - 1]
       // the frozen picture keeps the look the clip had at that moment
       if (c && hasTransform(c)) {
-        const ts = Math.min(c.in + (a.t - c.start), c.out)
+        const ts = srcAt(c, a.t)
         fc.tf = evalTransform(c, ts)
         const wp = evalWarp(c, ts)
         if (wp) fc.warp = { fixed: wp, keys: [] }
@@ -305,9 +437,9 @@ export function reducer(state, a) {
         } else if (local >= c.dur - MIN_CLIP) {
           clips = [...state.clips.slice(0, idx + 1), fc, ...state.clips.slice(idx + 1)]
         } else {
-          const cut = c.in + local
-          const left = newClip(c, { out: cut })
-          const right = newClip(c, { id: uid(), in: cut, transition: null })
+          const sr = splitRanges(c, a.t)
+          const left = newClip(c, sr.first)
+          const right = newClip(c, { ...sr.second, id: uid(), transition: null })
           clips = [...state.clips.slice(0, idx), left, fc, right, ...state.clips.slice(idx + 1)]
         }
       }
@@ -316,10 +448,11 @@ export function reducer(state, a) {
 
     // Delete everything selected. Deleting an attached audio stream ('sa:') just silences it.
     case 'deleteSelection': {
-      if (!state.selection.length) return state
-      const sel = new Set(state.selection)
+      const todo = state.selection.filter((id) => !isLocked(state, id)) // locked rows cannot be edited
+      if (!todo.length) return state
+      const sel = new Set(todo)
       const gone = new Map() // clipId -> streams deleted
-      for (const id of state.selection) {
+      for (const id of todo) {
         if (!id.startsWith('sa:')) continue
         const [, cid, n] = id.split(':')
         gone.set(cid, [...(gone.get(cid) || []), +n])
@@ -384,10 +517,11 @@ export function reducer(state, a) {
     case 'toggleKeyAll': {
       const f = (c) => {
         if (c.id !== a.id) return c
-        const anyHere = PROPS.some((p) => keyAt(c.anim && c.anim[p.id], a.t))
+        const props = PROPS.filter((q) => !q.mask || c.mask) // the mask sliders only exist for clips that have a mask
+        const anyHere = props.some((p) => keyAt(c.anim && c.anim[p.id], a.t))
         const anim = { ...c.anim }
         let tf = c.tf
-        for (const p of PROPS) {
+        for (const p of props) {
           const list = anim[p.id] || []
           const hit = keyAt(list, a.t)
           if (anyHere) {
@@ -696,11 +830,115 @@ export function reducer(state, a) {
         if (c.id !== a.id) return c
         const m = state.media.find((x) => x.id === c.mediaId)
         const maxOut = m && m.type === 'video' ? m.duration : 3600
-        if (a.side === 'out') return { ...c, out: clamp(a.value, c.in + MIN_CLIP, maxOut) }
+        const sp = speedOf(c)
+        // the side that is at the left end of the clip on the timeline moves the clip's start
+        if (a.side === 'out') {
+          const nout = clamp(a.value, c.in + MIN_CLIP, maxOut)
+          return { ...c, out: nout, start: c.reverse ? Math.max(0, c.start + (c.out - nout) / sp) : c.start }
+        }
         const nin = clamp(a.value, 0, c.out - MIN_CLIP)
-        return { ...c, in: nin, start: Math.max(0, c.start + (nin - c.in)) }
+        return { ...c, in: nin, start: c.reverse ? c.start : Math.max(0, c.start + (nin - c.in) / sp) }
       })
       return { ...state, overlayClips }
+    }
+
+    // ---- titles and text: a clip on a video track whose picture is drawn from text (see textRender.js)
+    case 'addText': {
+      let videoTracks = state.videoTracks
+      let rowOrder = state.rowOrder
+      let tr = videoTracks.find((x) => /^Text/.test(x.name))
+      if (!tr) {
+        tr = { id: a.trackId || uid(), name: 'Text 1' }
+        videoTracks = [...videoTracks, tr]
+        rowOrder = ['v:' + tr.id, ...rowKeys(state)]
+      }
+      const text = { ...TEXT_DEFAULTS, ...(a.text || {}) }
+      const clip = { id: a.id || uid(), mediaId: null, trackId: tr.id, in: 0, out: a.dur || 3, start: Math.max(0, a.t || 0), text }
+      if (a.y) clip.tf = { ...DEFAULTS, y: a.y }
+      return { ...commit(state, { overlayClips: [...state.overlayClips, clip] }), videoTracks, rowOrder, selection: [clip.id] }
+    }
+    // change the text of a clip; patch = {content: 'Hi'} / {outline: {on: true}} ...; live = while dragging a slider
+    case 'setText': {
+      const f = (c) => {
+        if (c.id !== a.id || !c.text) return c
+        const text = { ...c.text }
+        for (const [k, v] of Object.entries(a.patch)) text[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...(text[k] || {}), ...v } : v
+        return { ...c, text }
+      }
+      return a.live ? { ...state, overlayClips: state.overlayClips.map(f) } : commit(state, { overlayClips: state.overlayClips.map(f) })
+    }
+    // a look from TEXT_PRESETS: the text style and the position
+    case 'applyTextPreset': {
+      const f = (c) => {
+        if (c.id !== a.id || !c.text) return c
+        const text = { ...TEXT_DEFAULTS, content: c.text.content, ...a.text }
+        return { ...c, text, tf: { ...DEFAULTS, ...c.tf, y: a.y || 0 } }
+      }
+      return commit(state, { overlayClips: state.overlayClips.map(f) })
+    }
+    // ---- masks (see masks.js). patch = {shape: 'ellipse'} / {feather: 20} / {pts: [...]}; live = while dragging
+    case 'setMask': {
+      const f = (c) => {
+        if (c.id !== a.id) return c
+        const base = c.mask || MASK_DEFAULT
+        return { ...c, mask: { ...base, ...a.patch } }
+      }
+      return a.live ? { ...state, ...mapClips(state, f) } : commit(state, mapClips(state, f))
+    }
+    case 'clearMask': {
+      const f = (c) => {
+        if (c.id !== a.id || !c.mask) return c
+        const { mask, ...rest } = c
+        const anim = { ...(c.anim || {}) }
+        for (const k of ['mx', 'my', 'ms']) delete anim[k]
+        return { ...rest, anim }
+      }
+      return commit(state, mapClips(state, f))
+    }
+    // "Subject in front of text": a copy of the clip on a new track at the top, with the same mask, so the masked
+    // copy can sit in front of the text that is on the tracks below it
+    case 'maskCopyAbove': {
+      const c = layout(state.clips).find((x) => x.id === a.id) || overlayLayout(state.overlayClips).find((x) => x.id === a.id)
+      if (!c || c.text) return state
+      const trackId = uid()
+      const { start, dur, ov, transition, noAudio, origin, groupId, ...keep } = c
+      const copy = { ...JSON.parse(JSON.stringify(keep)), id: uid(), trackId, start: c.start }
+      return {
+        ...commit(state, { overlayClips: [...state.overlayClips, copy] }),
+        videoTracks: [...state.videoTracks, { id: trackId, name: 'Subject cutout' }],
+        rowOrder: ['v:' + trackId, ...rowKeys(state)],
+        selection: [copy.id],
+      }
+    }
+    // picture effects: blur, sharpen, vignette, glow, chroma key and colour correction (see effects.js).
+    // patch = {blur: 20} / {key: {on: true}} / {cc: {contrast: 120}}; live = a slider is being dragged (checkpoint first)
+    case 'setFx': {
+      const f = (c) => {
+        if (c.id !== a.id) return c
+        const fx = { ...(c.fx || {}) }
+        for (const [k, v] of Object.entries(a.patch)) fx[k] = k === 'key' || k === 'cc' ? { ...(fx[k] || {}), ...v } : v
+        return { ...c, fx }
+      }
+      return a.live ? { ...state, ...mapClips(state, f) } : commit(state, mapClips(state, f))
+    }
+    case 'resetFx': {
+      const f = (c) => {
+        if (c.id !== a.id || !c.fx) return c
+        if (a.only === 'cc') return { ...c, fx: { ...c.fx, cc: undefined } }
+        const { fx, ...rest } = c
+        return a.only === 'effects' && fx.cc ? { ...rest, fx: { cc: fx.cc } } : rest
+      }
+      return commit(state, mapClips(state, f))
+    }
+    // speed (1 = normal, 2 = twice as fast, 0.5 = slow motion) and reverse, for main and overlay clips
+    case 'setSpeed': {
+      const sp = clamp(+a.speed || 1, 0.1, 8)
+      const f = (c) => (c.id === a.id ? { ...c, speed: sp === 1 ? undefined : sp } : c)
+      return a.live ? { ...state, ...mapClips(state, f) } : commit(state, mapClips(state, f))
+    }
+    case 'setReverse': {
+      const f = (c) => (c.id === a.id ? { ...c, reverse: a.value ? true : undefined } : c)
+      return commit(state, mapClips(state, f))
     }
 
     // ---- audio tracks & clips
@@ -757,6 +995,42 @@ export function reducer(state, a) {
       return { ...state, audioClips }
     }
 
+    case 'setAspect':
+      return ASPECTS.some((x) => x.id === a.aspect) ? { ...state, aspect: a.aspect } : state
+
+    // ---- markers, locking, hiding, colour labels
+    case 'addMarker': {
+      const id = a.id || uid()
+      return { ...state, markers: [...state.markers, { id, t: Math.max(0, a.t), label: a.label || '' }].sort((x, y) => x.t - y.t) }
+    }
+    case 'removeMarker':
+      return { ...state, markers: state.markers.filter((m) => m.id !== a.id) }
+    case 'renameMarker':
+      return { ...state, markers: state.markers.map((m) => (m.id === a.id ? { ...m, label: a.label } : m)) }
+    case 'moveMarker':
+      return { ...state, markers: state.markers.map((m) => (m.id === a.id ? { ...m, t: Math.max(0, a.t) } : m)).sort((x, y) => x.t - y.t) }
+    case 'toggleRowLock': {
+      const on = state.lockedRows.includes(a.key)
+      return { ...state, lockedRows: on ? state.lockedRows.filter((k) => k !== a.key) : [...state.lockedRows, a.key] }
+    }
+    case 'toggleRowHide': {
+      const on = state.hiddenRows.includes(a.key)
+      return { ...state, hiddenRows: on ? state.hiddenRows.filter((k) => k !== a.key) : [...state.hiddenRows, a.key] }
+    }
+    // colour label on video / overlay / audio clips (color = a name from LABELS, or null to clear)
+    case 'setLabel': {
+      const ids = new Set(a.ids)
+      const f = (c) => (ids.has(c.id) ? { ...c, label: a.color || undefined } : c)
+      return commit(state, { clips: state.clips.map(f), overlayClips: state.overlayClips.map(f), audioClips: state.audioClips.map(f) })
+    }
+
+    // ---- copy / paste / duplicate
+    case 'paste':
+      return clipboard ? pasteItems(state, clipboard, a.t) : state
+    case 'duplicate': {
+      const cb = cloneSelection(state, state.selection)
+      return cb.main.length + cb.over.length + cb.aud.length ? pasteItems(state, cb, null) : state
+    }
     // ---- selection (selecting a group member selects the whole group)
     case 'select': {
       if (a.id == null) return state.selection.length ? { ...state, selection: [] } : state

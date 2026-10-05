@@ -1,10 +1,294 @@
-import { useState } from 'react'
-import { layout, overlayLayout, soleVideoClip } from './state.js'
+import { useEffect, useState } from 'react'
+import { layout, overlayLayout, soleVideoClip, srcAt, tlOf, speedOf, fmtDur, aspectRatio } from './state.js'
 import Icon from './Icon.jsx'
 import { PROPS, evalProp, keyAt, KEY_EPS } from './motion.js'
 import EaseEditor from './EaseEditor.jsx'
+import { FX_SLIDERS, KEY_DEFAULTS } from './effects.js'
+import { TEXT_DEFAULTS, TEXT_FONTS, TEXT_ANIMS, TEXT_PRESETS } from './textRender.js'
+import { LABELS } from './labels.js'
 
 const label = (n) => n.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+
+// Speed (slow motion / fast forward) and playing a clip backwards.
+function SpeedPanel({ clip, dispatch }) {
+  const sp = speedOf(clip)
+  const pos = Math.round((100 * Math.log(sp / 0.1)) / Math.log(80))
+  const set = (v, live) => dispatch({ type: 'setSpeed', id: clip.id, speed: v, live })
+  return (
+    <Section id="speed" title="Speed and direction">
+      <div className="mtop">
+        <span className="mlabel">Speed</span>
+        <span className="minput speed-in">
+          <input type="number" min="0.1" max="8" step="0.05" value={+sp.toFixed(2)} onChange={(e) => e.target.value !== '' && set(+e.target.value)} />
+          <span className="unit">×</span>
+        </span>
+      </div>
+      <input
+        type="range"
+        min="0"
+        max="100"
+        value={pos}
+        onPointerDown={() => dispatch({ type: 'checkpoint' })}
+        onChange={(e) => set(0.1 * Math.pow(80, +e.target.value / 100), true)}
+      />
+      <div className="mtop btnrow">
+        {[0.25, 0.5, 1, 2, 4].map((v) => (
+          <button key={v} className={'mini wide' + (Math.abs(sp - v) < 0.005 ? ' on' : '')} onClick={() => set(v)}>{v}×</button>
+        ))}
+      </div>
+      <div className="mtop btnrow">
+        <button className={'mini wide' + (clip.reverse ? ' on' : '')} onClick={() => dispatch({ type: 'setReverse', id: clip.id, value: !clip.reverse })} title="Play this clip backwards">
+          <Icon name="rewind" size={13} /> Reverse
+        </button>
+      </div>
+      <div className="hint left">
+        Lasts {fmtDur(clip.dur)} on the timeline. {clip.reverse ? 'A reversed clip takes a moment to prepare for the preview and is silent there; the export has its reversed sound. ' : ''}Speed changes the sound's speed too, and keeps its pitch.
+      </div>
+    </Section>
+  )
+}
+
+// The text of a text clip: what it says, its look and how it appears and disappears.
+function TextPanel({ clip, dispatch }) {
+  const tx = { ...TEXT_DEFAULTS, ...clip.text }
+  const set = (patch) => dispatch({ type: 'setText', id: clip.id, patch })
+  const live = (patch) => dispatch({ type: 'setText', id: clip.id, patch, live: true })
+  const start = () => dispatch({ type: 'checkpoint' })
+  return (
+    <Section id="text" title="Text">
+      <textarea
+        className="text-edit"
+        rows="3"
+        value={tx.content}
+        onFocus={start}
+        onChange={(e) => live({ content: e.target.value })}
+        placeholder="Type your text here"
+      />
+      <div className="mtop btnrow">
+        {TEXT_PRESETS.map((p) => (
+          <button key={p.name} className="mini wide" onClick={() => dispatch({ type: 'applyTextPreset', id: clip.id, text: p.text, y: p.y })}>{p.name}</button>
+        ))}
+      </div>
+      <div className="mtop">
+        <span className="mlabel">Font</span>
+        <select value={tx.font} onChange={(e) => set({ font: e.target.value })}>
+          {TEXT_FONTS.map((f) => (
+            <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
+          ))}
+        </select>
+      </div>
+      <FxSlider label="Size" value={tx.size} min={2} max={30} step={0.5} onStart={start} onChange={(v) => live({ size: v })} />
+      <div className="mtop btnrow">
+        <button className={'mini wide' + (tx.bold ? ' on' : '')} onClick={() => set({ bold: !tx.bold })}><b>B</b></button>
+        <button className={'mini wide' + (tx.italic ? ' on' : '')} onClick={() => set({ italic: !tx.italic })}><i>I</i></button>
+        {['left', 'center', 'right'].map((al) => (
+          <button key={al} className={'mini wide' + (tx.align === al ? ' on' : '')} onClick={() => set({ align: al })}>{al}</button>
+        ))}
+        <input type="color" value={tx.color} onPointerDown={start} onChange={(e) => live({ color: e.target.value })} title="Text colour" />
+      </div>
+      <label className="chk"><input type="checkbox" checked={!!tx.outline.on} onChange={(e) => set({ outline: { on: e.target.checked } })} />Outline</label>
+      {tx.outline.on && (
+        <div className="mtop">
+          <input type="color" value={tx.outline.color} onPointerDown={start} onChange={(e) => live({ outline: { color: e.target.value } })} />
+          <input type="range" min="1" max="20" value={tx.outline.width} onPointerDown={start} onChange={(e) => live({ outline: { width: +e.target.value } })} />
+        </div>
+      )}
+      <label className="chk"><input type="checkbox" checked={!!tx.shadow.on} onChange={(e) => set({ shadow: { on: e.target.checked } })} />Shadow / glow</label>
+      {tx.shadow.on && (
+        <div className="mtop">
+          <input type="color" value={tx.shadow.color} onPointerDown={start} onChange={(e) => live({ shadow: { color: e.target.value } })} />
+          <input type="range" min="0" max="40" value={tx.shadow.blur} onPointerDown={start} onChange={(e) => live({ shadow: { blur: +e.target.value } })} />
+        </div>
+      )}
+      <label className="chk"><input type="checkbox" checked={!!tx.bg.on} onChange={(e) => set({ bg: { on: e.target.checked } })} />Background box</label>
+      {tx.bg.on && (
+        <div className="mtop">
+          <input type="color" value={tx.bg.color} onPointerDown={start} onChange={(e) => live({ bg: { color: e.target.value } })} />
+          <input type="range" min="0" max="100" value={tx.bg.opacity} onPointerDown={start} onChange={(e) => live({ bg: { opacity: +e.target.value } })} />
+        </div>
+      )}
+      <div className="mtop">
+        <span className="mlabel">Appears</span>
+        <select value={tx.animIn} onChange={(e) => set({ animIn: e.target.value })}>
+          {TEXT_ANIMS.map((an) => (
+            <option key={an.id} value={an.id}>{an.label}</option>
+          ))}
+        </select>
+      </div>
+      <div className="mtop">
+        <span className="mlabel">Disappears</span>
+        <select value={tx.animOut} onChange={(e) => set({ animOut: e.target.value })}>
+          {TEXT_ANIMS.filter((an) => an.id !== 'type').map((an) => (
+            <option key={an.id} value={an.id}>{an.label}</option>
+          ))}
+        </select>
+      </div>
+      <FxSlider label="Animation length (seconds)" value={tx.animDur} min={0.1} max={2} step={0.05} onStart={start} onChange={(v) => live({ animDur: v })} />
+      <div className="hint left">Drag the text on the preview to move it, or use the Transform sliders. Change how long it lasts by dragging its ends on the timeline.</div>
+    </Section>
+  )
+}
+
+// A mask shows only part of the clip: a rectangle, an ellipse or a shape you draw around a subject.
+function MaskPanel({ clip, dispatch, mode, setMode }) {
+  const mk = clip.mask
+  // the AI model for the smart mask is downloaded once, on request
+  const [models, setModels] = useState(null) // {ready, totalBytes}
+  const [dl, setDl] = useState(null) // {received, total} while downloading
+  const [dlErr, setDlErr] = useState('')
+  useEffect(() => {
+    window.api.modelsStatus().then(setModels)
+    return window.api.onModelsProgress(setDl)
+  }, [])
+  const download = async () => {
+    setDlErr('')
+    setDl({ received: 0, total: models ? models.totalBytes : 1 })
+    const r = await window.api.modelsDownload()
+    setDl(null)
+    setModels(r)
+    if (r.error) setDlErr(r.error)
+  }
+  const ready = !!(models && models.ready)
+  const start = () => dispatch({ type: 'checkpoint' })
+  const set = (patch, live) => dispatch({ type: 'setMask', id: clip.id, patch, live })
+  const shapeBtn = (shape, label) => (
+    <button
+      className={'mini wide' + (mk && mk.shape === shape ? ' on' : '')}
+      onClick={() => {
+        set({ shape })
+        setMode('mask')
+      }}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <Section id="mask" title="Mask">
+      <div className="mtop btnrow">
+        {shapeBtn('rect', 'Rectangle')}
+        {shapeBtn('ellipse', 'Ellipse')}
+        <button className={'mini wide' + (mode === 'maskdraw' ? ' on' : '')} onClick={() => setMode(mode === 'maskdraw' ? 'mask' : 'maskdraw')} title="Draw freehand around the subject you want to keep">
+          <Icon name="wand" size={13} /> Draw around subject
+        </button>
+      </div>
+      {!clip.text && (
+        <div className="mtop btnrow">
+          <button
+            className={'mini wide' + (mode === 'maskdrawsmart' ? ' on' : '')}
+            disabled={!ready}
+            onClick={() => setMode(mode === 'maskdrawsmart' ? 'mask' : 'maskdrawsmart')}
+            title={ready ? 'Draw a loop around the subject and the AI finds its exact edges on this frame' : 'Download the AI model first (below)'}
+          >
+            <Icon name="star" size={13} /> Smart select (AI)
+          </button>
+        </div>
+      )}
+      {!clip.text && !ready && (
+        <>
+          <div className="hint left">
+            Smart select uses an AI model (about {models ? Math.round(models.totalBytes / 1e6) : 45} MB). It is downloaded once from the internet and then works without it.
+          </div>
+          {dl ? (
+            <>
+              <div className="bar"><div className="bar-fill" style={{ width: Math.min(100, (dl.received / Math.max(1, dl.total)) * 100) + '%' }} /></div>
+              <div className="hint left">Downloading… {Math.round((dl.received / Math.max(1, dl.total)) * 100)}%</div>
+            </>
+          ) : (
+            <button className="mini wide" disabled={!models} onClick={download}><Icon name="download" size={13} /> Download the AI model</button>
+          )}
+          {dlErr && <div className="hint warn">{dlErr}</div>}
+        </>
+      )}
+      {mode === 'maskdraw' && <div className="hint left">Draw a loop around the subject on the preview, then let go.</div>}
+      {mode === 'maskdrawsmart' && <div className="hint left">Draw a loose loop around the subject you want. The AI works out its exact edges. It looks at this one frame; use the Mask X / Y keyframes to follow it.</div>}
+      {mk && (
+        <>
+          <FxSlider label="Soft edge" value={mk.feather || 0} min={0} max={100} onStart={start} onChange={(v) => set({ feather: v }, true)} />
+          <FxSlider label="Grow / shrink" value={mk.expand || 0} min={-100} max={100} onStart={start} onChange={(v) => set({ expand: v }, true)} />
+          <label className="chk"><input type="checkbox" checked={!!mk.invert} onChange={(e) => set({ invert: e.target.checked })} />Invert (keep everything outside)</label>
+          <div className="mtop btnrow">
+            <button className={'mini wide' + (mode === 'mask' ? ' on' : '')} onClick={() => setMode(mode === 'mask' ? 'transform' : 'mask')}>{mode === 'mask' ? 'Hide mask on preview' : 'Show mask on preview'}</button>
+            <button className="mini wide" onClick={() => dispatch({ type: 'clearMask', id: clip.id })}>Remove mask</button>
+          </div>
+          <div className="hint left">Drag inside the mask to move it. To make it follow something, add a keyframe, move the playhead and drag it again.</div>
+          {!clip.text && (
+            <button className="mini wide" onClick={() => dispatch({ type: 'maskCopyAbove', id: clip.id })} title="Makes a copy of this clip on a new track at the top, with the same mask, so the subject shows in front of text on the tracks below">
+              <Icon name="layers" size={13} /> Subject in front of text
+            </button>
+          )}
+        </>
+      )}
+    </Section>
+  )
+}
+
+// A slider with a name, for the effects
+function FxSlider({ label, value, min, max, step = 1, onChange, onStart }) {
+  return (
+    <div className="mrow">
+      <div className="mtop"><span className="mlabel">{label}</span></div>
+      <div className="minput">
+        <input type="range" min={min} max={max} step={step} value={value} onPointerDown={onStart} onChange={(e) => onChange(+e.target.value)} />
+        <input type="number" min={min} max={max} step={step} value={Math.round(value)} onFocus={onStart} onChange={(e) => e.target.value !== '' && onChange(+e.target.value)} />
+      </div>
+    </div>
+  )
+}
+
+// Blur, sharpen, vignette, glow and chroma key (green screen). Colour correction has its own tab.
+function EffectsPanel({ clip, dispatch, onOpenColour }) {
+  const fx = clip.fx || {}
+  const key = { ...KEY_DEFAULTS, ...(fx.key || {}) }
+  const start = () => dispatch({ type: 'checkpoint' })
+  const set = (patch) => dispatch({ type: 'setFx', id: clip.id, patch, live: true })
+  const any = FX_SLIDERS.some((s) => (fx[s.id] || 0) !== 0) || key.on
+  return (
+    <Section id="effects" title="Effects">
+      {FX_SLIDERS.map((s) => (
+        <FxSlider key={s.id} label={s.label} value={fx[s.id] || 0} min={s.min} max={s.max} onStart={start} onChange={(v) => set({ [s.id]: v })} />
+      ))}
+      <label className="chk">
+        <input type="checkbox" checked={key.on} onChange={(e) => dispatch({ type: 'setFx', id: clip.id, patch: { key: { on: e.target.checked } } })} />
+        Chroma key (green screen)
+      </label>
+      {key.on && (
+        <>
+          <div className="mtop">
+            <span className="mlabel">Colour to remove</span>
+            <input type="color" value={key.color} onChange={(e) => set({ key: { color: e.target.value } })} onPointerDown={start} />
+          </div>
+          <FxSlider label="Strength (how close a colour must be)" value={key.sim} min={0} max={100} onStart={start} onChange={(v) => set({ key: { sim: v } })} />
+          <FxSlider label="Soft edge" value={key.smooth} min={0} max={100} onStart={start} onChange={(v) => set({ key: { smooth: v } })} />
+          <FxSlider label="Remove colour spill" value={key.spill} min={0} max={100} onStart={start} onChange={(v) => set({ key: { spill: v } })} />
+          <div className="hint left">Put another clip on a track below this one to see it through the removed colour.</div>
+        </>
+      )}
+      {any && <button className="mini wide" onClick={() => dispatch({ type: 'resetFx', id: clip.id, only: 'effects' })}>Reset effects</button>}
+      <button className="mini wide" onClick={() => onOpenColour && onOpenColour(clip.id)} title="Open the Colour tab for this clip">
+        <Icon name="palette" size={13} /> Colour correction…{fx.cc && Object.keys(fx.cc).length ? ' (on)' : ''}
+      </button>
+    </Section>
+  )
+}
+
+// Colour label for the selected clips: a coloured stripe along the top of the clip, to find things at a glance.
+function LabelRow({ state, dispatch }) {
+  const ids = state.selection.filter((id) => !id.startsWith('sa:'))
+  if (!ids.length) return null
+  const items = [...state.clips, ...state.overlayClips, ...state.audioClips].filter((c) => ids.includes(c.id))
+  const current = items.length && items.every((c) => c.label === items[0].label) ? items[0].label : null
+  return (
+    <div className="label-row">
+      <span className="mlabel">Colour label</span>
+      <span className="label-swatches">
+        <button className={'swatch none' + (!current ? ' on' : '')} title="No label" onClick={() => dispatch({ type: 'setLabel', ids, color: null })} />
+        {Object.entries(LABELS).map(([name, col]) => (
+          <button key={name} className={'swatch' + (current === name ? ' on' : '')} style={{ background: col }} title={name} onClick={() => dispatch({ type: 'setLabel', ids, color: name })} />
+        ))}
+      </span>
+    </div>
+  )
+}
 
 // A section that folds open and closed (a dropdown). Whether it is open is remembered.
 function Section({ id, title, children }) {
@@ -35,10 +319,10 @@ function Section({ id, title, children }) {
 
 // Position / scale / stretch / rotation / opacity with keyframes for one clip, at the current playhead.
 // The same things can be dragged on the preview (see TransformOverlay).
-function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFreeMode }) {
-  const ts = Math.min(clip.out, Math.max(clip.in, clip.in + (playhead - clip.start)))
+function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFreeMode, fill }) {
+  const ts = srcAt(clip, playhead)
   const inside = playhead >= clip.start - 0.001 && playhead <= clip.start + clip.dur + 0.001
-  const seek = (t) => dispatch({ type: 'setPlayhead', t: clip.start + (t - clip.in), user: true })
+  const seek = (t) => dispatch({ type: 'setPlayhead', t: tlOf(clip, t), user: true })
   // all the motion keyframe times together
   const times = []
   for (const list of Object.values(clip.anim || {})) for (const k of list || []) if (!times.some((x) => Math.abs(x - k.t) < KEY_EPS)) times.push(k.t)
@@ -65,6 +349,12 @@ function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFre
         <WarpControls clip={clip} playhead={playhead} dispatch={dispatch} />
       ) : (
         <>
+      {fill && Math.abs(fill - 100) > 0.5 && (
+        <div className="mtop btnrow">
+          <button className="mini wide" onClick={() => dispatch({ type: 'setProp', id: clip.id, prop: 'scale', value: Math.round(fill * 10) / 10, t: ts })} title="Make the picture big enough to cover the whole frame (the edges are cropped)">Fill the frame</button>
+          <button className="mini wide" onClick={() => dispatch({ type: 'setProp', id: clip.id, prop: 'scale', value: 100, t: ts })} title="Show the whole picture inside the frame">Fit in the frame</button>
+        </div>
+      )}
       <div className="mtop kfall">
         <span className="mlabel">Keyframe</span>
         <span className="kfctl">
@@ -89,7 +379,7 @@ function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFre
             : 'To animate: add a keyframe, move the playhead, then change the picture (drag it on the preview or use the sliders).'}
         </div>
       )}
-      {PROPS.map((p) => {
+      {PROPS.filter((p) => !p.mask || clip.mask).map((p) => {
         const list = (clip.anim && clip.anim[p.id]) || []
         const val = evalProp(clip, p.id, ts)
         const kf = keyAt(list, ts)
@@ -141,9 +431,9 @@ function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFre
 // Funny warp controls (shown while Funny warp is on): drag the four corners on the preview. One keyframe
 // holds the whole shape.
 function WarpControls({ clip, playhead, dispatch }) {
-  const ts = Math.min(clip.out, Math.max(clip.in, clip.in + (playhead - clip.start)))
+  const ts = srcAt(clip, playhead)
   const inside = playhead >= clip.start - 0.001 && playhead <= clip.start + clip.dur + 0.001
-  const seek = (t) => dispatch({ type: 'setPlayhead', t: clip.start + (t - clip.in), user: true })
+  const seek = (t) => dispatch({ type: 'setPlayhead', t: tlOf(clip, t), user: true })
   const keys = (clip.warp && clip.warp.keys) || []
   const kf = keyAt(keys, ts)
   const prev = [...keys].reverse().find((k) => k.t < ts - KEY_EPS)
@@ -185,12 +475,19 @@ function WarpControls({ clip, playhead, dispatch }) {
 // track labels on the timeline, so the two always agree. The setting belongs to the whole lane / track.
 function AudioPanel({ state, dispatch }) {
   const id = state.selection[0]
+  const [target, setTarget] = useState(-14)
+  const [busy, setBusy] = useState(false)
+  const [loud, setLoud] = useState('')
   let name = ''
   let st = null
   let patch = null
   let note = ''
+  let source = null // what the loudness button measures: {file, from, to}
   if (id.startsWith('sa:')) {
     const n = +id.split(':')[2]
+    const vc = state.clips.find((x) => x.id === id.split(':')[1])
+    const vm = vc && state.media.find((m) => m.id === vc.mediaId)
+    if (vc && vm && (vm.audioFiles || [])[n]) source = { file: vm.audioFiles[n], from: vc.in, to: vc.out }
     st = { volume: 1, mute: false, ...state.streamSettings[n] }
     name = st.name || `Video audio ${n + 1}`
     patch = (p) => dispatch({ type: 'setStream', n, patch: p })
@@ -198,6 +495,9 @@ function AudioPanel({ state, dispatch }) {
   } else {
     const a = state.audioClips.find((x) => x.id === id)
     const tr = a && state.audioTracks.find((x) => x.id === a.trackId)
+    const am = a && state.media.find((m) => m.id === a.mediaId)
+    const af = a && am ? (a.stream != null ? (am.audioFiles || [])[a.stream] : am.path) : null
+    if (af) source = { file: af, from: a.in, to: a.out }
     if (tr) {
       st = tr
       name = tr.name
@@ -207,6 +507,23 @@ function AudioPanel({ state, dispatch }) {
   }
   if (!st) return <div className="hint">Audio selected. Drag it to move it, drag its edges to trim it, or press Delete.</div>
   const pct = Math.round(st.volume * 100)
+  // measure how loud the selected clip is and set the volume so it comes out at the target loudness
+  const normalise = async () => {
+    setBusy(true)
+    setLoud('')
+    try {
+      const r = await window.api.measureLoudness({ ...source, stream: 0 })
+      if (r.lufs == null) setLoud('Could not measure this sound (is it silent?).')
+      else {
+        const factor = Math.pow(10, (target - r.lufs) / 20)
+        const v = Math.max(0.05, Math.min(2, factor))
+        patch({ volume: v })
+        setLoud(`It measured ${r.lufs.toFixed(1)} LUFS. Volume set to ${Math.round(v * 100)}%` + (factor > 2 ? ' (the most the slider allows: it will still be quieter than the target)' : '') + '.')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <>
       <div className="insp-clip">{name}</div>
@@ -227,11 +544,27 @@ function AudioPanel({ state, dispatch }) {
         {pct !== 100 && <button className="mini wide" onClick={() => patch({ volume: 1 })}>Reset</button>}
       </div>
       <div className="hint left">{note}</div>
+      {source && (
+        <>
+          <div className="mtop">
+            <span className="mlabel">Match loudness to</span>
+            <select value={target} onChange={(e) => setTarget(+e.target.value)}>
+              <option value={-14}>-14 LUFS (YouTube, Spotify)</option>
+              <option value={-16}>-16 LUFS (podcasts, phones)</option>
+              <option value={-23}>-23 LUFS (TV, broadcast)</option>
+            </select>
+          </div>
+          <button className="mini wide" disabled={busy} onClick={normalise} title="Measures this clip and sets the volume so it is as loud as the target">
+            {busy ? 'Measuring…' : 'Normalise loudness'}
+          </button>
+          {loud && <div className="hint left">{loud}</div>}
+        </>
+      )}
       <div className="hint left">Drag the clip to move it, drag its edges to trim it, or press Delete.</div>
     </>
   )
 }
-export default function Inspector({ state, dispatch, transitions, errors, onReload, onOpenFolder, mode, setMode, freeMode, setFreeMode, open = true, setOpen }) {
+export default function Inspector({ state, dispatch, transitions, errors, onReload, onOpenFolder, mode, setMode, freeMode, setFreeMode, open = true, setOpen, onOpenColour }) {
   const lay = layout(state.clips)
   const only = soleVideoClip(state)
   const idx = lay.findIndex((c) => c.id === only)
@@ -239,6 +572,10 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
   const clip = lay[idx] || oclip
   const media = clip && state.media.find((m) => m.id === clip.mediaId)
   const cur = clip && clip.transition && clip.transition.name
+  // how big (in %) the picture must be to cover the whole frame
+  const ratio = aspectRatio(state)
+  const pic = media && media.width && media.height ? media.width / media.height : null
+  const fillScale = pic ? 100 * Math.max(ratio / pic, pic / ratio) : null
 
   const preview = () => {
     dispatch({ type: 'setPlayhead', t: Math.max(0, clip.start - 0.7), user: true })
@@ -254,10 +591,13 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
         </button>
       )}
       <div className="panel-title">
-        Inspector
-        <button className="mini" onClick={() => setOpen(false)} title="Hide the inspector"><Icon name="right" size={12} /></button>
+        <span className="title-left">
+          <button className="mini" onClick={() => setOpen(false)} title="Hide the inspector"><Icon name="right" size={12} /></button>
+          Inspector
+        </span>
       </div>
       <div className="insp-body">
+        <LabelRow state={state} dispatch={dispatch} />
         {state.selection.length === 0 && (
           <div className="hint">Select a clip on the timeline to edit it or give it a transition from the previous clip. Drag a box around items to select several.</div>
         )}
@@ -265,7 +605,7 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
         {state.selection.length === 1 && !clip && <AudioPanel state={state} dispatch={dispatch} />}
         {clip && (
           <>
-            <div className="insp-clip">{media ? media.name : 'Clip'}</div>
+            <div className="insp-clip">{clip.text ? 'Text' : media ? media.name : 'Clip'}</div>
 
             {media && media.type === 'image' && (
               <label className="insp-row">
@@ -284,7 +624,11 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
               </label>
             )}
 
-            <MotionPanel clip={clip} playhead={state.playhead} dispatch={dispatch} mode={mode} setMode={setMode} freeMode={freeMode} setFreeMode={setFreeMode} />
+            {clip.text && <TextPanel clip={clip} dispatch={dispatch} />}
+            <MotionPanel clip={clip} playhead={state.playhead} dispatch={dispatch} mode={mode} setMode={setMode} freeMode={freeMode} setFreeMode={setFreeMode} fill={fillScale} />
+            {media && media.type === 'video' && <SpeedPanel clip={clip} dispatch={dispatch} />}
+            <MaskPanel clip={clip} dispatch={dispatch} mode={mode} setMode={setMode} />
+            <EffectsPanel clip={clip} dispatch={dispatch} onOpenColour={onOpenColour} />
 
             {oclip && <div className="hint left">This clip is on an overlay track. Drag it along its track to choose when it appears; transitions only work on the main video track.</div>}
             {!oclip && (

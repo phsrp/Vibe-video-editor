@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRenderer } from './glRenderer.js'
 import { evalTransform, evalWarp } from './motion.js'
-import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl } from './state.js'
+import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl, srcAt, speedOf, aspectRatio, previewSize } from './state.js'
 import WarpOverlay from './WarpOverlay.jsx'
+import { drawText, loadFont } from './textRender.js'
 import TransformOverlay from './TransformOverlay.jsx'
+import MaskOverlay from './MaskOverlay.jsx'
 
 // One shared Web Audio context: every audio element goes through a gain node, which lets the volume go
 // above 100% (up to 200%). A plain <audio> element can only be turned down.
@@ -14,7 +16,7 @@ const getCtx = () => {
 }
 
 // Owns the canvas, the playback clock and the <video>/<img> elements.
-export default function Preview({ state, dispatch, transitions, onCompiled, active = true, mode = 'none', freeMode = false }) {
+export default function Preview({ state, dispatch, transitions, onCompiled, active = true, mode = 'none', setMode = () => {}, freeMode = false }) {
   const activeRef = useRef(active)
   activeRef.current = active
   const canvasRef = useRef(null)
@@ -29,6 +31,8 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
     rendererRef.current = renderer
     window.__renderer = renderer
     window.__aels = aels.current // for the developer self-test
+    window.__els = els.current // for the developer self-test
+    import('./smartMask.js').then((m) => (window.__smartMask = m)) // developer self-test
     let raf
     let clock = { ms: 0, t0: 0, seek: -1, playing: false }
     let haveFrame = false
@@ -47,7 +51,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         el = new Image()
         el.src = toUrl(media.path)
       }
-      e = { el, kind: media.type, media }
+      e = { el, kind: media.type, media, srcPath: media.path }
       els.current.set(clip.id, e)
       return e
     }
@@ -58,6 +62,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       if (!e) {
         const el = new Audio()
         el.preload = 'auto'
+        el.preservesPitch = true // a clip at another speed keeps its voice pitch
         el.src = toUrl(file)
         const ctx = getCtx()
         const gain = ctx.createGain()
@@ -70,6 +75,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
     }
 
     function audioPass(t, s, clips) {
+      const hid = new Set(s.hiddenRows || []) // hidden rows are silent
       const want = new Map() // key -> {file, src, vol}
       const soon = [] // clips starting in the next few seconds: loaded ahead so they start on time
       const valid = new Set()
@@ -80,7 +86,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         const active = t >= c.start && t < c.start + c.dur
         const upcoming = !active && c.start > t && c.start - t < 3
         ;(m.audioFiles || []).forEach((f, n) => {
-          if (!f || (c.noAudio || []).includes(n)) return // missing file, or detached/deleted stream
+          if (!f || (c.noAudio || []).includes(n) || hid.has('s:' + n) || c.reverse) return // (a reversed clip is silent in the preview; the export has its reversed sound) // missing file, or detached/deleted stream
           const key = `v:${c.id}:${n}`
           valid.add(key)
           if (active) {
@@ -90,7 +96,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
             const nx = clips[i + 1]
             if (nx && nx.ov > 0 && t >= nx.start) fade *= 1 - (t - nx.start) / nx.ov
             const st = s.streamSettings[n] || {}
-            want.set(key, { file: f, src: c.in + (t - c.start), vol: st.mute ? 0 : (st.volume ?? 1) * fade })
+            want.set(key, { file: f, src: srcAt(c, t), rate: speedOf(c), vol: st.mute ? 0 : (st.volume ?? 1) * fade })
           } else if (upcoming) soon.push({ key, file: f, src: c.in })
         })
       })
@@ -101,13 +107,14 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         valid.add(key)
         const tr = s.audioTracks.find((x) => x.id === a.trackId)
         const active = t >= a.start && t < a.start + a.dur
-        if (active) want.set(key, { file, src: a.in + (t - a.start), vol: tr ? (tr.mute ? 0 : tr.volume) : 1 })
+        if (active && !hid.has('a:' + a.trackId)) want.set(key, { file, src: a.in + (t - a.start), vol: tr ? (tr.mute ? 0 : tr.volume) : 1 })
         else if (a.start > t && a.start - t < 3) soon.push({ key, file, src: a.in })
       }
       for (const [key, w] of want) {
         const ae = getAudio(key, w.file)
         const el = ae.el
         ae.gain.gain.value = Math.max(0, Math.min(2, w.vol))
+        if (w.rate && el.playbackRate !== w.rate) el.playbackRate = w.rate
         if (s.playing) {
           if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {})
           if (Math.abs(el.currentTime - w.src) > 0.25) el.currentTime = w.src
@@ -132,11 +139,58 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
     }
 
     // Keep a clip's <video> in step with the timeline; returns {el,w,h} if a frame is ready.
+    // A reversed clip is played from a reversed copy of its range, which ffmpeg makes in the background
+    const proxies = new Map() // key -> {path}
+    function proxyFor(clip, media) {
+      const key = `${media.path}|${clip.in.toFixed(3)}|${clip.out.toFixed(3)}`
+      let p = proxies.get(key)
+      if (!p) {
+        p = { path: null }
+        proxies.set(key, p)
+        window.api.reverseProxy({ file: media.path, from: clip.in, to: clip.out }).then((r) => (p.path = r)).catch(() => {})
+      }
+      return p.path
+    }
+
+    // text clips: the text is drawn onto a canvas (as big as the preview) which then is a picture like any other
+    const textCvs = new Map()
+    function textLayer(c, t) {
+      const W = canvasRef.current.width
+      const H = canvasRef.current.height
+      let cv = textCvs.get(c.id)
+      if (!cv) {
+        cv = document.createElement('canvas')
+        textCvs.set(c.id, cv)
+        loadFont(c.text)
+      }
+      if (cv.width !== W || cv.height !== H) {
+        cv.width = W
+        cv.height = H
+      }
+      drawText(cv, c.text, t - c.start, c.dur)
+      return { el: cv, w: W, h: H }
+    }
+
     function syncClip(clip, t, playing, media) {
       const e = getEl(clip, media)
       if (e.kind === 'video') {
         const v = e.el
-        const src = Math.min(clip.in + (t - clip.start), clip.out)
+        let src = srcAt(clip, t)
+        let want = media.path
+        let canPlay = true
+        if (clip.reverse) {
+          const pp = proxyFor(clip, media)
+          if (pp) {
+            want = pp
+            src = Math.min((t - clip.start) * speedOf(clip), clip.out - clip.in)
+          } else canPlay = false // not ready yet: show the still frame
+        }
+        if (e.srcPath !== want) {
+          e.srcPath = want
+          v.src = toUrl(want)
+        }
+        if (v.playbackRate !== speedOf(clip)) v.playbackRate = speedOf(clip)
+        playing = playing && canPlay
         if (playing) {
           if (Math.abs(v.currentTime - src) > 0.3) v.currentTime = src
           if (v.paused) v.play().catch(() => {})
@@ -197,10 +251,11 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       audioPass(t, s, clips)
 
       const mediaOf = (c) => s.media.find((m) => m.id === c.mediaId)
-      const motionAt = (c) => Math.min(c.in + (t - c.start), c.out)
+      const motionAt = (c) => srcAt(c, t)
 
       // main video: one clip under the playhead normally, two during a transition
-      let act = clips.filter((c) => t >= c.start && t < c.start + c.dur)
+      const hid = new Set(s.hiddenRows || [])
+      let act = hid.has('main') ? [] : clips.filter((c) => t >= c.start && t < c.start + c.dur)
       if (!act.length && clips.length && t >= mainTotal && t >= total - 0.001) act = [clips[clips.length - 1]]
       act = act.slice(-2)
       const actIds = new Set(act.map((c) => c.id))
@@ -217,10 +272,14 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         if (A) {
           A.tf = evalTransform(cA, motionAt(cA))
           A.warp = evalWarp(cA, motionAt(cA))
+          A.fx = cA.fx
+          A.mask = cA.mask
         }
         if (B) {
           B.tf = evalTransform(cB, motionAt(cB))
           B.warp = evalWarp(cB, motionAt(cB))
+          B.fx = cB.fx
+          B.mask = cB.mask
         }
         if (cB && B && A) layerFor.main = { A, B, name: cB.transition && cB.transition.name, progress: (t - cB.start) / cB.ov }
         else if (A) layerFor.main = { A }
@@ -228,18 +287,21 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       }
       // overlay tracks: the clip of each track under the playhead (the later one wins)
       for (const tr of s.videoTracks) {
+        if (hid.has('v:' + tr.id)) continue
         const hit = overlays.filter((c) => c.trackId === tr.id && t >= c.start && t < c.start + c.dur)
         const c = hit[hit.length - 1]
         if (!c) continue
         actIds.add(c.id)
         const m = mediaOf(c)
-        const A = m ? syncClip(c, t, s.playing, m) : null
+        const A = c.text ? textLayer(c, t) : m ? syncClip(c, t, s.playing, m) : null
         if (!A) {
           missing = true
           continue
         }
         A.tf = evalTransform(c, motionAt(c))
         A.warp = evalWarp(c, motionAt(c))
+        A.fx = c.fx
+        A.mask = c.mask
         layerFor['v:' + tr.id] = { A }
       }
       for (const [id, e] of els.current) {
@@ -251,7 +313,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
           const m = mediaOf(c)
           if (!m) continue
           const e = getEl(c, m)
-          if (e.kind === 'video' && e.el.paused && e.el.readyState > 0 && Math.abs(e.el.currentTime - c.in) > 0.05 && !e.el.seeking) e.el.currentTime = c.in
+          if (e.kind === 'video' && e.el.paused && !c.reverse && e.el.readyState > 0 && Math.abs(e.el.currentTime - c.in) > 0.05 && !e.el.seeking) e.el.currentTime = c.in
         }
       }
       const layers = []
@@ -273,7 +335,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         const nm = mediaOf(next)
         if (nm) {
           const ne = getEl(next, nm)
-          if (ne.kind === 'video' && ne.el.paused && ne.el.readyState > 0 && Math.abs(ne.el.currentTime - next.in) > 0.05 && !ne.el.seeking)
+          if (ne.kind === 'video' && ne.el.paused && !next.reverse && ne.el.readyState > 0 && Math.abs(ne.el.currentTime - next.in) > 0.05 && !ne.el.seeking)
             ne.el.currentTime = next.in
         }
       }
@@ -296,25 +358,44 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
 
   // the picture is always 16:9: fit it into the available space (the warp handles are drawn on top of it)
   const wrapRef = useRef(null)
+  const ratio = aspectRatio(state)
+  const [cw, ch] = previewSize(ratio)
   const [box, setBox] = useState({ w: 640, h: 360 })
   useEffect(() => {
     const el = wrapRef.current
     const fit = () => {
-      const w = Math.max(1, Math.min(el.clientWidth, (el.clientHeight * 16) / 9))
-      setBox({ w, h: (w * 9) / 16 })
+      const w = Math.max(1, Math.min(el.clientWidth, el.clientHeight * ratio))
+      setBox({ w, h: w / ratio })
     }
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [ratio])
 
   return (
     <div className="preview-wrap" ref={wrapRef}>
       <div className="preview-box" style={{ width: box.w, height: box.h }}>
-        <canvas ref={canvasRef} width={1280} height={720} className="preview-canvas" />
+        <canvas ref={canvasRef} width={cw} height={ch} className="preview-canvas" />
         {mode === 'warp' && <WarpOverlay state={state} dispatch={dispatch} />}
         {mode === 'transform' && <TransformOverlay state={state} dispatch={dispatch} free={freeMode} box={box} />}
+        {(mode === 'mask' || mode === 'maskdraw' || mode === 'maskdrawsmart') && (
+          <MaskOverlay
+            state={state}
+            dispatch={dispatch}
+            mode={mode}
+            setMode={setMode}
+            box={box}
+            getFrame={(id) => {
+              // the picture of a clip as it is on screen now (for the smart mask)
+              const e = els.current.get(id)
+              const el = e && e.el
+              const w = el && (el.videoWidth || el.naturalWidth)
+              const h = el && (el.videoHeight || el.naturalHeight)
+              return w ? { el, w, h } : null
+            }}
+          />
+        )}
       </div>
     </div>
   )

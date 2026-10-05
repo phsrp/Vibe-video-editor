@@ -1,7 +1,6 @@
-import { layout, overlayLayout, soleVideoClip } from './state.js'
+import { layout, overlayLayout, soleVideoClip, srcAt, aspectRatio } from './state.js'
 import { evalTransform, evalProp, keyAt, PROPS, rectToFrame } from './motion.js'
 
-const RATIO = 16 / 9
 // the picture's rectangle (q space, y up): corners, then edge midpoints
 const CORNERS = [[0, 1], [1, 1], [1, 0], [0, 0]]
 const EDGES = [[0.5, 1, 'sy'], [1, 0.5, 'sx'], [0.5, 0, 'sy'], [0, 0.5, 'sx']]
@@ -12,13 +11,14 @@ const ROT_OFFSET = 30 // px, distance of the rotate handle from the top edge
 // to stretch only that way, and drag the round handle to rotate. If the clip has keyframes, changing it at
 // a new moment adds a keyframe there.
 export default function TransformOverlay({ state, dispatch, free, box }) {
+  const RATIO = aspectRatio(state)
   const id = soleVideoClip(state)
   const clip = id && (layout(state.clips).find((c) => c.id === id) || overlayLayout(state.overlayClips).find((c) => c.id === id))
   if (!clip) return null
   if (state.playhead < clip.start - 0.001 || state.playhead > clip.start + clip.dur + 0.001) return null
-  const media = state.media.find((m) => m.id === clip.mediaId)
+  const media = clip.text ? { width: RATIO * 1000, height: 1000 } : state.media.find((m) => m.id === clip.mediaId) // (a text clip is as big as the frame)
   if (!media || !media.width || !media.height) return null
-  const ts = Math.min(clip.out, Math.max(clip.in, clip.in + (state.playhead - clip.start)))
+  const ts = srcAt(clip, state.playhead)
   const ma = media.width / media.height
   const s = [Math.max(1, RATIO / ma), Math.max(1, ma / RATIO)]
   const tf = evalTransform(clip, ts)

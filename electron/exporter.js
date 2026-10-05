@@ -61,24 +61,40 @@ function buildFinal(plan, dir) {
       pre = `fps=${plan.fps},${fit(plan.w, plan.h)},format=yuv420p`
     } else {
       i = addInput('-ss', String(s.srcStart), '-t', String(s.srcDur), '-i', s.file)
-      pre = `fps=${plan.fps},${fit(plan.w, plan.h)},format=yuv420p`
+      // setpts makes the clip play faster or slower (speed 2 = twice as fast)
+      pre = `setpts=PTS/${s.speed || 1},fps=${plan.fps},${fit(plan.w, plan.h)},format=yuv420p`
     }
     // exactly s.frames frames per piece, so audio and video stay in sync over the whole timeline
     filters.push(`[${i}:v:0]${pre},setpts=PTS-STARTPTS,tpad=stop=4:stop_mode=clone,trim=end_frame=${s.frames},setpts=PTS-STARTPTS[v${k}]`)
     vlabels.push(`[v${k}]`)
   })
   // the picture is also saved as a small preview image twice a second, which the Export tab shows while it works
-  filters.push(`${vlabels.join('')}concat=n=${vlabels.length}:v=1:a=0[vcat]`)
-  filters.push('[vcat]split=2[vout][vprev]')
-  filters.push('[vprev]fps=2,scale=640:-2[vpv]')
+  if (vlabels.length) {
+    filters.push(`${vlabels.join('')}concat=n=${vlabels.length}:v=1:a=0[vcat]`)
+    filters.push('[vcat]split=2[vout][vprev]')
+    filters.push('[vprev]fps=2,scale=640:-2[vpv]')
+  }
 
   // audio: one chain per clip, mixed per track
   const tlabels = []
   plan.audio.forEach((t, ti) => {
     const clipLabels = []
     t.clips.forEach((c, ci) => {
-      const i = addInput('-ss', String(c.srcStart), '-t', String(c.dur), '-i', c.file)
-      let chain = `[${i}:a:${c.stream}]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,volume=${c.vol}`
+      const i = addInput('-ss', String(c.srcStart), '-t', String(c.srcDur || c.dur), '-i', c.file)
+      let chain = `[${i}:a:${c.stream}]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS`
+      if (c.reverse) chain += ',areverse'
+      // speed: atempo only takes 0.5 to 2 at a time, so a bigger change is a chain of them
+      let sp = c.speed || 1
+      while (sp > 2) {
+        chain += ',atempo=2'
+        sp /= 2
+      }
+      while (sp < 0.5) {
+        chain += ',atempo=0.5'
+        sp /= 0.5
+      }
+      if (Math.abs(sp - 1) > 1e-6) chain += `,atempo=${sp.toFixed(5)}`
+      chain += `,volume=${c.vol}`
       if (c.fadeIn > 0) chain += `,afade=t=in:st=0:d=${c.fadeIn}`
       if (c.fadeOut > 0) chain += `,afade=t=out:st=${Math.max(0, c.dur - c.fadeOut)}:d=${c.fadeOut}`
       if (c.at > 0.0005) chain += `,adelay=${Math.round(c.at * 1000)}:all=1`
@@ -97,7 +113,9 @@ function buildFinal(plan, dir) {
   if (tlabels.length) {
     if (plan.audioMode === 'mix' || tlabels.length === 1) {
       const mix = tlabels.length > 1 ? `${tlabels.join('')}amix=inputs=${tlabels.length}:duration=longest:normalize=0,` : `${tlabels[0]}`
-      filters.push(`${mix}alimiter=limit=0.97,apad=whole_dur=${tot},atrim=end=${tot}[aout0]`)
+      // loudness: bring the whole mix to a target loudness (LUFS), like streaming services do
+      const ln = plan.loudness && plan.loudness !== 'off' ? `loudnorm=I=${plan.loudness}:TP=-1.5:LRA=11,` : ''
+      filters.push(`${mix}${ln}alimiter=limit=0.97,apad=whole_dur=${tot},atrim=end=${tot}[aout0]`)
       aouts.push('[aout0]')
     } else {
       tlabels.forEach((l, i) => {
@@ -111,8 +129,19 @@ function buildFinal(plan, dir) {
   fs.writeFileSync(scriptPath, filters.join(';\n'))
 
   const br = plan.bitrateMbps
-  const args = ['-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', ...inputs, '-filter_complex_script', scriptPath, '-map', '[vout]']
+  const args = ['-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', ...inputs, '-filter_complex_script', scriptPath]
+  if (!plan.audioOnly) args.push('-map', '[vout]')
   aouts.forEach((l) => args.push('-map', l))
+  if (plan.audioOnly) {
+    // audio only: MP3, M4A (AAC) or WAV
+    if (!aouts.length) throw new Error('There is no sound to export: every audio track is muted or empty.')
+    const kb = `${plan.audioKbps || 192}k`
+    if (plan.audioFormat === 'wav') args.push('-c:a', 'pcm_s16le', '-ar', '48000')
+    else if (plan.audioFormat === 'm4a') args.push('-c:a', 'aac', '-b:a', kb, '-ar', '48000', '-movflags', '+faststart')
+    else args.push('-c:a', 'libmp3lame', '-b:a', kb, '-ar', '48000')
+    args.push(plan.out)
+    return args
+  }
   // the video encoder: the processor (x264 / x265), or a graphics card (NVIDIA NVENC, AMD AMF, Intel Quick Sync)
   const hevc = plan.codec === 'h265'
   const speed = plan.speed || 'balanced'
@@ -173,7 +202,7 @@ function register({ ffmpegPath, getWindow }) {
 
   ipcMain.handle('export:chooseOutput', async (_e, name, ext) => {
     if (process.env.VIBE_SELFTEST && process.env.VIBE_TEST_OUT) return process.env.VIBE_TEST_OUT // developer self-test: no dialog
-    const kind = { mp4: 'MP4 video', mkv: 'MKV video', mov: 'MOV video' }[ext] || 'MP4 video'
+    const kind = { mp4: 'MP4 video', mkv: 'MKV video', mov: 'MOV video', mp3: 'MP3 audio', m4a: 'M4A audio', wav: 'WAV audio' }[ext] || 'MP4 video'
     const r = await dialog.showSaveDialog(getWindow(), {
       title: 'Export video',
       defaultPath: name,
@@ -196,7 +225,7 @@ function register({ ffmpegPath, getWindow }) {
     const vf = o.noPad ? `scale=${o.w}:${o.h}:force_original_aspect_ratio=decrease,setsar=1` : `${fit(o.w, o.h)}`
     const args = ['-y', '-v', 'error']
     if (o.isImage) args.push('-i', o.file, '-vf', vf, '-frames:v', '1')
-    else args.push('-ss', String(o.start), '-t', String(o.dur), '-i', o.file, '-vf', `fps=${o.fps},${vf}`, '-frames:v', String(o.maxFrames))
+    else args.push('-ss', String(o.start), '-t', String(o.dur), '-i', o.file, '-vf', `setpts=PTS/${o.speed || 1},fps=${o.fps},${vf}`, '-frames:v', String(o.maxFrames))
     args.push('-compression_level', '1', path.join(outDir, '%05d.png'))
     await runFfmpeg(ffmpegPath, args)
     const count = fs.readdirSync(outDir).length
@@ -246,7 +275,10 @@ function register({ ffmpegPath, getWindow }) {
       buf = lines.pop()
       for (const l of lines) {
         const m = /^frame=(\d+)/.exec(l.trim())
-        if (m) e.sender.send('export:progress', { frame: +m[1] })
+        if (m && !plan.audioOnly) e.sender.send('export:progress', { frame: +m[1] })
+        // audio only has no frames: ffmpeg reports how many seconds are done instead
+        const sm = /^out_time_(?:ms|us)=(\d+)/.exec(l.trim())
+        if (sm && plan.audioOnly) e.sender.send('export:progress', { frame: Math.round((+sm[1] / 1e6) * plan.fps) })
       }
     })
     return plan.out

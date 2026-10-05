@@ -46,6 +46,20 @@ contextBridge.exposeInMainWorld('api', {
   },
   audioPeaks: (file) => ipcRenderer.invoke('media:peaks', file),
   openProjectsFolder: () => ipcRenderer.invoke('projects:folder'),
+  reverseProxy: (o) => ipcRenderer.invoke('media:reverse', o),
+  measureLoudness: (o) => ipcRenderer.invoke('audio:loudness', o),
+  modelsStatus: () => ipcRenderer.invoke('models:status'),
+  modelsDownload: () => ipcRenderer.invoke('models:download'),
+  onModelsProgress: (cb) => {
+    const h = (_e, p) => cb(p)
+    ipcRenderer.on('models:progress', h)
+    return () => ipcRenderer.removeListener('models:progress', h)
+  },
+  historyAdd: (o) => ipcRenderer.invoke('history:add', o),
+  historyList: (key) => ipcRenderer.invoke('history:list', key),
+  historyRead: (o) => ipcRenderer.invoke('history:read', o),
+  saveVoiceOver: (data) => ipcRenderer.invoke('voice:save', { data }),
+  openVoiceFolder: () => ipcRenderer.invoke('voice:folder'),
   libraryFolder: () => ipcRenderer.invoke('library:folder'),
   libraryList: () => ipcRenderer.invoke('library:list'),
   libraryAdd: () => ipcRenderer.invoke('library:add'),

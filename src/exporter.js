@@ -1,49 +1,74 @@
 // Video export, renderer side. See electron/exporter.js for the overall approach.
-import { layout, overlayLayout, totalDuration, projectDuration, videoRowsBottomUp, hasAttached, streamCount, toUrl } from './state.js'
+import { drawText, loadFont } from './textRender.js'
+import { aspectRatio } from './state.js'
+import { speedOf, srcAt, layout, overlayLayout, totalDuration, projectDuration, videoRowsBottomUp, hasAttached, streamCount, toUrl } from './state.js'
 import { createRenderer } from './glRenderer.js'
 import { evalTransform, evalWarp, hasTransform } from './motion.js'
 
-export const RESOLUTIONS = { '1080p': [1920, 1080], '2K': [2560, 1440], '4K': [3840, 2160] }
-export const DEFAULT_BITRATE = { '1080p': 12, '2K': 24, '4K': 50 }
+export const RESOLUTIONS = { '720p': [1280, 720], '1080p': [1920, 1080], '2K': [2560, 1440], '4K': [3840, 2160] }
+// the size of the exported picture: the short side is 1080 / 1440 / 2160 and the long side follows the project's shape
+export function frameSize(res, state) {
+  const short = RESOLUTIONS[res][1]
+  const r = aspectRatio(state)
+  const even = (v) => Math.round(v / 2) * 2
+  return r >= 1 ? [even(short * r), short] : [short, even(short / r)]
+}
+export const DEFAULT_BITRATE = { '720p': 6, '1080p': 12, '2K': 24, '4K': 50 }
 export const PRESETS = { fast: 'veryfast', balanced: 'medium', best: 'slow' }
 
-export const defaultSettings = { res: '1080p', fps: 30, codec: 'h264', bitrate: 12, speed: 'balanced', audioMode: 'mix', container: 'mp4', audioKbps: 192, encoder: 'cpu' }
+export const defaultSettings = { res: '1080p', fps: 30, codec: 'h264', bitrate: 12, speed: 'balanced', audioMode: 'mix', container: 'mp4', audioKbps: 192, encoder: 'cpu', outputKind: 'video', audioFormat: 'mp3', loudness: 'off', preset: 'custom' }
 
 // Cut the timeline into pieces: plain clip pieces (read by FFmpeg) and transition pieces (rendered here),
 // and work out the audio tracks. Frame counts come from rounding the piece boundaries, so the
 // pieces always add up to the exact length of the timeline.
 export function buildPlan(state, s) {
-  const [w, h] = RESOLUTIONS[s.res]
+  const [w, h] = frameSize(s.res, state)
   const fps = s.fps
+  const audioOnly = s.outputKind === 'audio' // render just the sound (MP3 / M4A / WAV)
   const lay = layout(state.clips)
-  const ovl = overlayLayout(state.overlayClips)
+  const hid = new Set(state.hiddenRows || []) // hidden rows are not exported
+  const mainHidden = hid.has('main')
+  const ovl = overlayLayout(state.overlayClips).filter((c) => !hid.has('v:' + c.trackId))
   if (!lay.length && !ovl.length) throw new Error('The timeline is empty.')
   const mediaOf = (id) => state.media.find((m) => m.id === id)
   const mainTotal = totalDuration(state.clips)
   const total = projectDuration(state)
 
   for (const c of [...lay, ...ovl]) {
+    if (c.text) continue
     const m = mediaOf(c.mediaId)
     if (!m || m.missing) throw new Error(`A source file is missing: ${m ? m.name : 'unknown'}. Reconnect it by re-importing, then try again.`)
   }
 
+  // Where a clip's picture comes from for the project time span u0..u1: the file (a reversed clip uses a reversed
+  // copy of its range, made before the export starts), where in that file to start, and the speed.
+  const sideFor = (c, u0, u1) => {
+    if (c.text) return { text: c.text, isText: true, file: 'text', start: 0, speed: 1, tl0: u0, clip: c } // drawn, not read from a file
+    const m = mediaOf(c.mediaId)
+    const sp = speedOf(c)
+    const rel = (u0 - c.start) * sp
+    const isImage = m.type === 'image'
+    if (c.reverse && !isImage) return { file: null, proxy: { file: m.path, from: c.in, to: c.out }, isImage, start: rel, speed: sp, tl0: u0, clip: c }
+    return { file: m.path, isImage, start: c.in + rel, speed: sp, tl0: u0, clip: c }
+  }
+
   // main video, cut into pieces (a transition, a clip, or a clip with motion / warp)
   const raw = []
-  lay.forEach((c, i) => {
+  if (!mainHidden) lay.forEach((c, i) => {
     const next = lay[i + 1]
     const nextOv = next ? next.ov : 0
-    const m = mediaOf(c.mediaId)
     if (c.ov > 0) raw.push({ kind: 'trans', t0: c.start, t1: c.start + c.ov, a: lay[i - 1], b: c, name: c.transition.name })
     const t0 = c.start + c.ov
     const t1 = c.start + c.dur - nextOv
     if (t1 - t0 > 1e-6) {
-      // a clip with motion (position / scale / rotation / opacity) or warp must go through the effects renderer
-      if (hasTransform(c)) raw.push({ kind: 'solo', t0, t1, clip: c, media: m, srcStart: c.in + c.ov })
-      else raw.push({ kind: 'clip', t0, t1, clip: c, media: m, file: m.path, isImage: m.type === 'image', srcStart: c.in + c.ov, srcDur: t1 - t0 })
+      // a clip with motion (position / scale / rotation / opacity), warp or effects must go through the effects renderer
+      if (hasTransform(c)) raw.push({ kind: 'solo', t0, t1, clip: c })
+      else raw.push({ kind: 'clip', t0, t1, clip: c })
     }
   })
   // nothing on the main track (before the first / after the last clip): black, with overlays on top
-  if (total - mainTotal > 1e-6) raw.push({ kind: 'none', t0: mainTotal, t1: total })
+  const mainEnd = mainHidden ? 0 : mainTotal
+  if (total - mainEnd > 1e-6) raw.push({ kind: 'none', t0: mainEnd, t1: total })
 
   // Overlay clips start and end anywhere: cut the pieces there too. Wherever an overlay is showing, the
   // piece is rendered with the effects renderer, with all the layers stacked.
@@ -61,7 +86,6 @@ export function buildPlan(state, s) {
     }
   }
 
-  const side = (m, start, clip) => ({ file: m.path, isImage: m.type === 'image', start, clip })
   const segments = []
   let k = 0
   for (const { r, u0, u1, over } of subs) {
@@ -72,15 +96,14 @@ export function buildPlan(state, s) {
     // the main video's layer for this piece
     let main = null
     if (r.kind === 'trans') {
-      const ma = mediaOf(r.a.mediaId)
-      const mb = mediaOf(r.b.mediaId)
       const span = r.t1 - r.t0
-      main = { a: side(ma, r.a.out - span + shift, r.a), b: side(mb, r.b.in + shift, r.b), name: r.name, p0: shift / span, p1: (shift + dur) / span }
+      main = { a: sideFor(r.a, u0, u1), b: sideFor(r.b, u0, u1), name: r.name, p0: shift / span, p1: (shift + dur) / span }
     } else if (r.kind === 'solo' || (r.kind === 'clip' && over.length)) {
-      main = { a: side(r.media, r.srcStart + shift, r.clip), b: null, name: null, p0: 0, p1: 1 }
+      main = { a: sideFor(r.clip, u0, u1), b: null, name: null, p0: 0, p1: 1 }
     }
     if (r.kind === 'clip' && !over.length) {
-      segments.push({ kind: 'clip', file: r.file, isImage: r.isImage, srcStart: r.srcStart + shift, srcDur: dur, frames })
+      const sd = sideFor(r.clip, u0, u1)
+      segments.push({ kind: 'clip', file: sd.file, proxy: sd.proxy, isImage: sd.isImage, srcStart: sd.start, srcDur: dur * sd.speed, speed: sd.speed, frames })
       continue
     }
     // layers, bottom first (the order of the rows on the timeline)
@@ -90,28 +113,28 @@ export function buildPlan(state, s) {
         if (main) layers.push(main)
       } else {
         const c = over.filter((x) => x.trackId === key.slice(2)).pop()
-        if (c) layers.push({ a: side(mediaOf(c.mediaId), c.in + (u0 - c.start), c), b: null, name: null, p0: 0, p1: 1 })
+        if (c) layers.push({ a: sideFor(c, u0, u1), b: null, name: null, p0: 0, p1: 1 })
       }
     }
     segments.push({ kind: 'gl', k: k++, frames, dur, layers })
-  }
-  const totalFrames = segments.reduce((a, x) => a + x.frames, 0)
+  }  if (audioOnly) segments.length = 0
+  const totalFrames = audioOnly ? Math.round(total * fps) : segments.reduce((a, x) => a + x.frames, 0)
   // ---- audio tracks (muted tracks are left out)
   const audio = []
   for (let n = 0; n < streamCount(state); n++) {
     const st = { volume: 1, mute: false, ...state.streamSettings[n] }
-    if (st.mute || st.volume <= 0) continue
+    if (st.mute || st.volume <= 0 || hid.has('s:' + n)) continue
     const clips = []
     lay.forEach((c, i) => {
       const m = mediaOf(c.mediaId)
       if (!hasAttached(c, m, n)) return
       const next = lay[i + 1]
-      clips.push({ file: m.path, stream: n, srcStart: c.in, dur: c.dur, at: c.start, vol: st.volume, fadeIn: c.ov, fadeOut: next ? next.ov : 0 })
+      clips.push({ file: m.path, stream: n, srcStart: c.in, srcDur: c.out - c.in, speed: speedOf(c), reverse: !!c.reverse, dur: c.dur, at: c.start, vol: st.volume, fadeIn: c.ov, fadeOut: next ? next.ov : 0 })
     })
     if (clips.length) audio.push({ name: `Video audio ${n + 1}`, clips })
   }
   for (const t of state.audioTracks) {
-    if (t.mute || t.volume <= 0) continue
+    if (t.mute || t.volume <= 0 || hid.has('a:' + t.id)) continue
     const clips = []
     for (const a of state.audioClips) {
       if (a.trackId !== t.id || a.start >= total) continue
@@ -133,6 +156,9 @@ export function buildPlan(state, s) {
     audioKbps: s.audioKbps || 192,
     encoder: s.encoder || 'cpu',
     speed: s.speed,
+    audioOnly,
+    audioFormat: s.audioFormat || 'mp3',
+    loudness: s.loudness || 'off',
     segments,
     audio,
     totalFrames,
@@ -172,6 +198,19 @@ export async function runExport({ state, settings, transitions, outPath, onProgr
     const report = (label, extra = 0) => onProgress({ pct: Math.min(99.5, ((doneT * W_T + extra) / units) * 100), label })
     report('Preparing…')
 
+    // reversed clips are played from a reversed copy of their range (full quality), made first
+    const todo = []
+    for (const s of plan.segments) {
+      if (s.kind === 'clip') todo.push(s)
+      else if (s.kind === 'gl') for (const l of s.layers) todo.push(l.a, ...(l.b ? [l.b] : []))
+    }
+    const needProxy = todo.filter((x) => x.proxy && !x.file)
+    for (let pi = 0; pi < needProxy.length; pi++) {
+      if (cancelled) throw new Error('Export cancelled')
+      report(`Preparing reversed clips ${pi + 1} of ${needProxy.length}`)
+      needProxy[pi].file = await window.api.reverseProxy({ ...needProxy[pi].proxy, quality: 'export' })
+    }
+
     if (trans.length) {
       const canvas = document.createElement('canvas')
       canvas.width = w
@@ -187,15 +226,17 @@ export async function runExport({ state, settings, transitions, outPath, onProgr
         // every picture of every layer, as numbered images (not padded: the renderer fits them itself, like the preview)
         const srcs = []
         s.layers.forEach((l, li) => {
-          srcs.push({ li, which: 'a', side: l.a })
-          if (l.b) srcs.push({ li, which: 'b', side: l.b })
+          if (!l.a.isText) srcs.push({ li, which: 'a', side: l.a })
+          if (l.b && !l.b.isText) srcs.push({ li, which: 'b', side: l.b })
         })
         for (const x of srcs) {
-          x.info = await window.api.exportExtract({ name: `t${s.k}l${x.li}${x.which}`, file: x.side.file, isImage: x.side.isImage, start: x.side.start, dur: s.dur, fps, w, h, maxFrames: s.frames + 2, noPad: true })
+          x.info = await window.api.exportExtract({ name: `t${s.k}l${x.li}${x.which}`, file: x.side.file, isImage: x.side.isImage, start: x.side.start, dur: s.dur * (x.side.speed || 1), speed: x.side.speed || 1, fps, w, h, maxFrames: s.frames + 2, noPad: true })
         }
         if (cancelled) throw new Error('Export cancelled')
         await window.api.exportSegBegin({ k: s.k, w, h, fps })
         const cache = new Map()
+        const textCvs = new Map()
+        for (const l of s.layers) if (l.a.isText) await loadFont(l.a.clip.text)
         const load = (x, i) => {
           const idx = Math.min(i, x.info.count - 1)
           const ck = `${x.li}${x.which}${x.info.count === 1 ? 0 : idx}`
@@ -215,9 +256,21 @@ export async function runExport({ state, settings, transitions, outPath, onProgr
           const imgOf = new Map(srcs.map((x, j) => [`${x.li}${x.which}`, imgs[j]]))
           // each clip's motion and warp at the source time of this frame
           const sideOf = (li, which, sd) => {
-            const ts = Math.min(sd.clip.out, sd.start + i / fps)
+            const ts = srcAt(sd.clip, sd.tl0 + i / fps)
+            if (sd.isText) {
+              const key = li + which
+              let cv = textCvs.get(key)
+              if (!cv) {
+                cv = document.createElement('canvas')
+                cv.width = w
+                cv.height = h
+                textCvs.set(key, cv)
+              }
+              drawText(cv, sd.clip.text, sd.tl0 + i / fps - sd.clip.start, sd.clip.dur)
+              return { el: cv, w, h, tf: evalTransform(sd.clip, ts), warp: evalWarp(sd.clip, ts), fx: sd.clip.fx, mask: sd.clip.mask }
+            }
             const img = imgOf.get(`${li}${which}`)
-            return { el: img, w: img.naturalWidth, h: img.naturalHeight, tf: evalTransform(sd.clip, ts), warp: evalWarp(sd.clip, ts) }
+            return { el: img, w: img.naturalWidth, h: img.naturalHeight, tf: evalTransform(sd.clip, ts), warp: evalWarp(sd.clip, ts), fx: sd.clip.fx, mask: sd.clip.mask }
           }
           renderer.renderLayers(
             s.layers.map((l, li) => ({

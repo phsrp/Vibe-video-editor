@@ -23,6 +23,10 @@ export function serialize(state) {
     videoTracks: state.videoTracks,
     mainName: state.mainName,
     rowOrder: state.rowOrder,
+    aspect: state.aspect,
+    markers: state.markers,
+    lockedRows: state.lockedRows,
+    hiddenRows: state.hiddenRows,
   })
 }
 
@@ -59,6 +63,10 @@ export async function restore(json) {
     videoTracks: data.videoTracks || [],
     mainName: data.mainName || 'Video 1',
     rowOrder: data.rowOrder || [],
+    aspect: data.aspect || '16:9',
+    markers: data.markers || [],
+    lockedRows: data.lockedRows || [],
+    hiddenRows: data.hiddenRows || [],
     audioTracks: data.audioTracks || [],
     streamSettings: data.streamSettings || {},
     missing,
