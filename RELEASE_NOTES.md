@@ -1,1 +1,1 @@
-- New: drag a clip from one track to another. Main track to overlay tracks and back, overlay to overlay, and audio clips between audio tracks. The track you are over is outlined, and a video's sound goes with it
+- New: right-click a marker to delete it

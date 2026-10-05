@@ -988,7 +988,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                 ))}
                 <div className="ruler-knob" style={{ left: Math.min(state.playhead, total + 15) * zoom }} />
                 {state.markers.map((m) => (
-                  <div key={m.id} className="marker" style={{ left: m.t * zoom }} onPointerDown={(e) => startMarkerDrag(e, m)} onDoubleClick={() => setEditMarker(m.id)} title="Marker: click to jump, drag to move, double-click to name it">
+                  <div key={m.id} className="marker" style={{ left: m.t * zoom }} onPointerDown={(e) => startMarkerDrag(e, m)} onDoubleClick={() => setEditMarker(m.id)} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); dispatch({ type: 'removeMarker', id: m.id }) }} title="Marker: click to jump, drag to move, double-click to name it, right-click to delete">
                     <Icon name="flag" size={12} />
                     {editMarker === m.id ? (
                       <input
