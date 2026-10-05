@@ -1,1 +1,7 @@
-- Fixed the gap between the Transform buttons in the Inspector
+- BIG UPDATE: Export now has its own tab, so you can keep editing and watch your video being made
+- Graphics card encoding (NVIDIA, AMD or Intel) for much faster H.265 exports, plus MP4/MKV/MOV and audio quality options
+- New Library panel for the videos, images and sounds you use a lot (Documents > Vibe Video Editor Library)
+- Inspector sections fold open and closed, and the timeline scroll bar is bigger
+- Fixed: the preview no longer blinks when you pause, and the Home Projects folder button works
+- The Export shortcut (Ctrl+E) is gone, since Export is a tab now
+- README and all screenshots refreshed

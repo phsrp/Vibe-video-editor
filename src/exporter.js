@@ -7,7 +7,7 @@ export const RESOLUTIONS = { '1080p': [1920, 1080], '2K': [2560, 1440], '4K': [3
 export const DEFAULT_BITRATE = { '1080p': 12, '2K': 24, '4K': 50 }
 export const PRESETS = { fast: 'veryfast', balanced: 'medium', best: 'slow' }
 
-export const defaultSettings = { res: '1080p', fps: 30, codec: 'h264', bitrate: 12, speed: 'balanced', audioMode: 'mix' }
+export const defaultSettings = { res: '1080p', fps: 30, codec: 'h264', bitrate: 12, speed: 'balanced', audioMode: 'mix', container: 'mp4', audioKbps: 192, encoder: 'cpu' }
 
 // Cut the timeline into pieces: plain clip pieces (read by FFmpeg) and transition pieces (rendered here),
 // and work out the audio tracks. Frame counts come from rounding the piece boundaries, so the
@@ -130,6 +130,9 @@ export function buildPlan(state, s) {
     bitrateMbps: s.bitrate,
     preset: PRESETS[s.speed] || 'medium',
     audioMode: s.audioMode,
+    audioKbps: s.audioKbps || 192,
+    encoder: s.encoder || 'cpu',
+    speed: s.speed,
     segments,
     audio,
     totalFrames,
@@ -138,6 +141,8 @@ export function buildPlan(state, s) {
 }
 
 let cancelled = false
+let exporting = false
+export const isExporting = () => exporting
 export function cancelExport() {
   cancelled = true
   window.api.exportCancel()
@@ -146,13 +151,17 @@ export function cancelExport() {
 const pad5 = (n) => String(n).padStart(5, '0')
 
 // Runs the export. onProgress({pct, label}). Resolves with the output path.
-export async function runExport({ state, settings, transitions, outPath, onProgress }) {
+// onPreview(canvas): called now and then with the picture being rendered (effects part);
+// onPreviewUrl(url): a small image of the video being encoded (final part).
+export async function runExport({ state, settings, transitions, outPath, onProgress, onPreview, onPreviewUrl }) {
   cancelled = false
+  exporting = true
   const plan = buildPlan(state, settings)
   plan.out = outPath
   const { w, h, fps } = plan
-  await window.api.exportBegin()
+  const dir = await window.api.exportBegin()
   let unsub = null
+  let previewTimer = null
   try {
     const trans = plan.segments.filter((s) => s.kind === 'gl')
     const transFrames = trans.reduce((a, s) => a + s.frames, 0)
@@ -218,6 +227,7 @@ export async function runExport({ state, settings, transitions, outPath, onProgr
               progress: l.p0 + (l.p1 - l.p0) * ((i + 0.5) / s.frames),
             }))
           )
+          if (onPreview && i % 3 === 0) onPreview(canvas)
           renderer.read(buf)
           await window.api.exportFrame(buf)
           doneT++
@@ -229,11 +239,14 @@ export async function runExport({ state, settings, transitions, outPath, onProgr
     if (cancelled) throw new Error('Export cancelled')
     unsub = window.api.onExportProgress((p) => onProgress({ pct: Math.min(99.5, ((doneT * W_T + p.frame) / units) * 100), label: 'Encoding video…' }))
     onProgress({ pct: Math.min(99.5, ((doneT * W_T) / units) * 100), label: 'Encoding video…' })
+    if (onPreviewUrl) previewTimer = setInterval(() => onPreviewUrl(toUrl(`${dir}\\preview.jpg`) + '?t=' + Date.now()), 700)
     const forMain = { ...plan, segments: plan.segments.map((s) => (s.kind === 'gl' ? { kind: 'trans', k: s.k, frames: s.frames } : s)) }
     await window.api.exportFinal(forMain)
     onProgress({ pct: 100, label: 'Done' })
     return outPath
   } finally {
+    exporting = false
+    if (previewTimer) clearInterval(previewTimer)
     if (unsub) unsub()
     await window.api.exportCleanup()
   }

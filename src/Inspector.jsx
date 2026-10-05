@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { layout, overlayLayout, soleVideoClip } from './state.js'
 import Icon from './Icon.jsx'
 import { PROPS, evalProp, keyAt, KEY_EPS } from './motion.js'
@@ -5,6 +6,32 @@ import EaseEditor from './EaseEditor.jsx'
 
 const label = (n) => n.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
+// A section that folds open and closed (a dropdown). Whether it is open is remembered.
+function Section({ id, title, children }) {
+  const key = 'vibe.sec.' + id
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(key) !== '0'
+    } catch {
+      return true
+    }
+  })
+  const toggle = () => {
+    setOpen(!open)
+    try {
+      localStorage.setItem(key, open ? '0' : '1')
+    } catch {}
+  }
+  return (
+    <div className={'insp-sect' + (open ? ' open' : '')}>
+      <button className="sect-head" onClick={toggle} title={open ? 'Fold this section away' : 'Open this section'}>
+        <Icon name="right" size={12} />
+        <span>{title}</span>
+      </button>
+      {open && <div className="sect-body">{children}</div>}
+    </div>
+  )
+}
 
 // Position / scale / stretch / rotation / opacity with keyframes for one clip, at the current playhead.
 // The same things can be dragged on the preview (see TransformOverlay).
@@ -21,8 +48,7 @@ function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFre
   const nextT = times.find((x) => x > ts + KEY_EPS)
   const firstKey = here != null ? PROPS.map((p) => keyAt(clip.anim && clip.anim[p.id], ts)).find(Boolean) : null
   return (
-    <>
-      <div className="insp-section">Transform</div>
+    <Section id="transform" title="Transform and keyframes">
       {!inside && <div className="hint warn">Move the playhead over this clip to edit it.</div>}
       <div className="mtop btnrow">
         <button className={'mini wide' + (mode === 'transform' ? ' on' : '')} onClick={() => setMode(mode === 'transform' ? 'none' : 'transform')} title="Show the box on the preview: drag inside to move, drag a corner to resize, drag the round handle to rotate">
@@ -108,7 +134,7 @@ function MotionPanel({ clip, playhead, dispatch, mode, setMode, freeMode, setFre
       })}
         </>
       )}
-    </>
+    </Section>
   )
 }
 
@@ -261,8 +287,9 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
             <MotionPanel clip={clip} playhead={state.playhead} dispatch={dispatch} mode={mode} setMode={setMode} freeMode={freeMode} setFreeMode={setFreeMode} />
 
             {oclip && <div className="hint left">This clip is on an overlay track. Drag it along its track to choose when it appears; transitions only work on the main video track.</div>}
-            {!oclip && <div className="insp-section">Transition</div>}
-            {oclip ? null : idx === 0 ? (
+            {!oclip && (
+            <Section id="transition" title="Transition">
+            {idx === 0 ? (
               <div className="hint left">This is the first clip. A transition goes <i>between</i> two clips, so select a later clip.</div>
             ) : (
               <>
@@ -310,6 +337,8 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
                   </>
                 )}
               </>
+            )}
+            </Section>
             )}
           </>
         )}

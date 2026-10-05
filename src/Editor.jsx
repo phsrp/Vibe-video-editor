@@ -4,14 +4,14 @@ import Preview from './Preview.jsx'
 import Timeline from './Timeline.jsx'
 import KeybindDialog from './KeybindDialog.jsx'
 import Inspector from './Inspector.jsx'
+import LibraryPanel from './LibraryPanel.jsx'
 import Icon from './Icon.jsx'
-import ExportDialog from './ExportDialog.jsx'
 import { serialize, restore } from './project.js'
 import { actionFor } from './keybinds.js'
 
 // One open project. Several of these can exist at once (one per tab); only the active one is shown
 // and reacts to the keyboard, the others keep their state and wait.
-export default function Editor({ tabId, active, initial, binds, setBinds, onMeta, onNew, onOpen, registerHandle }) {
+export default function Editor({ tabId, active, initial, binds, setBinds, onMeta, onNew, onOpen, onExport, registerHandle }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const stateRef = useRef(state)
   stateRef.current = state
@@ -27,7 +27,6 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     loadTransitions()
   }, [])
   const [showKeys, setShowKeys] = useState(false)
-  const [showExport, setShowExport] = useState(false)
   const [projectPath, setProjectPath] = useState(null)
   const projectRef = useRef(null)
   projectRef.current = projectPath
@@ -49,6 +48,19 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
   }
   const [binOpen, setBinOpenState] = useState(() => flag('vibe.binOpen'))
   const [inspOpen, setInspOpenState] = useState(() => flag('vibe.inspOpen'))
+  const [libOpen, setLibOpenState] = useState(() => {
+    try {
+      return localStorage.getItem('vibe.libOpen') === '1' // folded away until you open it
+    } catch {
+      return false
+    }
+  })
+  const setLibOpen = (v) => {
+    setLibOpenState(v)
+    try {
+      localStorage.setItem('vibe.libOpen', v ? '1' : '0')
+    } catch {}
+  }
   const setBinOpen = (v) => {
     setBinOpenState(v)
     try {
@@ -179,7 +191,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
 
   // let the tab bar ask this project to save (when closing a tab)
   useEffect(() => {
-    registerHandle(tabId, { save: () => saveProject(false), isDirty: () => dirtyRef.current })
+    registerHandle(tabId, { save: () => saveProject(false), isDirty: () => dirtyRef.current, getState: () => stateRef.current })
     return () => registerHandle(tabId, null)
   }, [])
 
@@ -215,7 +227,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     const onKey = (e) => {
       if (!activeRef.current) return
       const tag = e.target.tagName
-      if (showKeys || showExport || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (showKeys || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       const action = actionFor(binds, e)
       if (!action) return
       e.preventDefault()
@@ -229,18 +241,17 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         save: () => saveProject(false),
         saveAs: () => saveProject(true),
         open: onOpen,
-        export: () => setShowExport(true),
         undo: () => dispatch({ type: 'undo' }),
         redo: () => dispatch({ type: 'redo' }),
         stepBack: () => dispatch({ type: 'setPlayhead', t: state.playhead - 1 / 30, user: true }),
         stepForward: () => dispatch({ type: 'setPlayhead', t: Math.min(total, state.playhead + 1 / 30), user: true }),
         goStart: () => dispatch({ type: 'setPlayhead', t: 0, user: true }),
       }
-      h[action]()
+      if (h[action]) h[action]()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.playing, state.playhead, total, binds, showKeys, showExport])
+  }, [state.playing, state.playhead, total, binds, showKeys])
 
   const addMediaToTimeline = (m) => {
     if (m.type === 'audio') dispatch({ type: 'addAudioClip', mediaId: m.id, trackId: null, start: state.playhead })
@@ -256,7 +267,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         <button onClick={() => saveProject(true)}>Save as…</button>
         <span className="proj-name">{projectName}{dirty ? ' •' : ''}</span>
         <span className="spacer" />
-        <button className="primary" onClick={() => setShowExport(true)} disabled={!state.clips.length && !state.overlayClips.length}>
+        <button className="primary" onClick={() => onExport()} disabled={!state.clips.length && !state.overlayClips.length}>
           <Icon name="upload" /> Export video…
         </button>
       </header>
@@ -312,6 +323,16 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
           </div>
         </aside>
 
+        <LibraryPanel
+          open={libOpen}
+          setOpen={setLibOpen}
+          onAddMedia={addMedia}
+          onUse={(m) => {
+            addMedia([m])
+            addMediaToTimeline(m)
+          }}
+        />
+
         <main className="stage">
           <Preview state={state} dispatch={dispatch} transitions={transitions} onCompiled={setTrErrors} active={active} mode={mode} freeMode={freeMode} />
           <div className="transport">
@@ -354,7 +375,6 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         onFreeze={freezeFrame}
         onKeybinds={() => setShowKeys(true)}
       />
-      {showExport && <ExportDialog state={state} transitions={transitions} projectName={projectName === 'Untitled' ? 'My video' : projectName} onClose={() => setShowExport(false)} />}
       {showKeys && <KeybindDialog binds={binds} setBinds={setBinds} onClose={() => setShowKeys(false)} />}
     </div>
   )

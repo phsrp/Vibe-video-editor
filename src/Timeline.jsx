@@ -630,7 +630,6 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
       <div className={'tl-row' + rowClass(key)} key={key} ref={rowRef(key)} style={{ height: H_AUDIO }}>
         <RowLabel
           name={st.name || streamName(n)}
-          sub={streamSub(n)}
           volume={st.volume}
           mute={st.mute}
           onVolume={(v) => dispatch({ type: 'setStream', n, patch: { volume: v } })}

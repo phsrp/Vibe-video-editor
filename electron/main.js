@@ -269,6 +269,59 @@ const projectsDir = () => {
 }
 ipcMain.handle('projects:folder', () => shell.openPath(projectsDir()))
 
+// The library: videos, images and sounds you use again and again (an intro, a logo, music, sound effects).
+// They live in Documents > Vibe Video Editor Library and show up in the Library panel of the editor.
+const libraryDir = () => {
+  const d = path.join(app.getPath('documents'), 'Vibe Video Editor Library')
+  try {
+    fs.mkdirSync(d, { recursive: true })
+  } catch {}
+  return d
+}
+ipcMain.handle('library:folder', () => shell.openPath(libraryDir()))
+ipcMain.handle('library:list', () => {
+  const ok = new Set([...IMAGE_EXT, ...VIDEO_EXT.map((e) => '.' + e), ...AUDIO_EXT.map((e) => '.' + e)])
+  const out = []
+  const walk = (dir, depth) => {
+    let names = []
+    try {
+      names = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const n of names) {
+      const p = path.join(dir, n.name)
+      if (n.isDirectory()) {
+        if (depth < 2) walk(p, depth + 1)
+      } else if (ok.has(path.extname(n.name).toLowerCase())) out.push({ path: p, name: n.name })
+    }
+  }
+  walk(libraryDir(), 0)
+  return out.sort((x, y) => x.name.localeCompare(y.name))
+})
+// "Add files...": pick files and copy them into the library
+ipcMain.handle('library:add', async () => {
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: 'Add to your library',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Videos, images and audio', extensions: [...VIDEO_EXT, ...IMAGE_EXT.map((e) => e.slice(1)), ...AUDIO_EXT] }],
+  })
+  if (r.canceled) return 0
+  const dir = libraryDir()
+  let n = 0
+  for (const src of r.filePaths) {
+    const ext = path.extname(src)
+    const base = path.basename(src, ext)
+    let dest = path.join(dir, base + ext)
+    for (let i = 2; fs.existsSync(dest); i++) dest = path.join(dir, `${base} (${i})${ext}`)
+    try {
+      fs.copyFileSync(src, dest)
+      n++
+    } catch {}
+  }
+  return n
+})
+
 ipcMain.handle('project:save', async (_e, { file, json, defaultName }) => {
   let target = file
   if (!target) {

@@ -16,7 +16,7 @@ export default function SettingsDialog({ settings, setSettings, theme, setTheme,
         <div className="set-row">
           <div>
             <div className="set-title">Automatic updates</div>
-            <div className="hint left">Check for a new version when the editor starts and every few hours, and ask before downloading anything.</div>
+            <div className="hint left">Check for a new version when the editor opens, and ask before downloading anything.</div>
           </div>
           <label className="switch">
             <input type="checkbox" checked={settings.autoUpdate} onChange={(e) => setSettings({ autoUpdate: e.target.checked })} />

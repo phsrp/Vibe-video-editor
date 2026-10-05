@@ -31,6 +31,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
     window.__aels = aels.current // for the developer self-test
     let raf
     let clock = { ms: 0, t0: 0, seek: -1, playing: false }
+    let haveFrame = false
 
     function getEl(clip, media) {
       let e = els.current.get(clip.id)
@@ -204,6 +205,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       act = act.slice(-2)
       const actIds = new Set(act.map((c) => c.id))
       const layerFor = {}
+      let missing = false // a picture that should be on screen is not ready yet (for example while it seeks)
       if (act.length) {
         const cA = act[0]
         const cB = act.length > 1 ? act[1] : null
@@ -222,6 +224,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         }
         if (cB && B && A) layerFor.main = { A, B, name: cB.transition && cB.transition.name, progress: (t - cB.start) / cB.ov }
         else if (A) layerFor.main = { A }
+        if (!layerFor.main || (cB && !(A && B))) missing = true
       }
       // overlay tracks: the clip of each track under the playhead (the later one wins)
       for (const tr of s.videoTracks) {
@@ -231,7 +234,10 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         actIds.add(c.id)
         const m = mediaOf(c)
         const A = m ? syncClip(c, t, s.playing, m) : null
-        if (!A) continue
+        if (!A) {
+          missing = true
+          continue
+        }
         A.tf = evalTransform(c, motionAt(c))
         A.warp = evalWarp(c, motionAt(c))
         layerFor['v:' + tr.id] = { A }
@@ -250,8 +256,15 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       }
       const layers = []
       for (const key of videoRowsBottomUp(s)) if (layerFor[key]) layers.push(layerFor[key])
-      if (!layers.length) return renderer.clear()
+      // While a video is still seeking (for example right after pausing) keep the picture that is already
+      // on screen instead of drawing a black or half-finished frame: that was the blink.
+      if (missing && haveFrame) return
+      if (!layers.length) {
+        haveFrame = false
+        return renderer.clear()
+      }
       renderer.renderLayers(layers)
+      haveFrame = !missing
       if (!act.length) return
       // warm up the following clip so the cut / transition starts seamlessly
       const last = act[act.length - 1]

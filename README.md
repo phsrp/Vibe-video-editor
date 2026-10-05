@@ -31,7 +31,7 @@
 
 ![Home page](docs/screenshots/home.png)
 
-**The editor.** Media bin, live preview, timeline with separate audio lanes, and an inspector for motion and transitions. Here the preview is partway through a cube transition.
+**The editor.** Media bin, live preview with the on-screen Transform box, a timeline with an overlay video track (here called *Reaction cam*) above the main video, separate audio lanes with waveforms, and an Inspector whose sections fold open and closed. The Media, Library and Inspector panels can each be hidden.
 
 ![The editor](docs/screenshots/editor.png)
 
@@ -39,9 +39,13 @@
 
 ![Light theme](docs/screenshots/editor-dawn.png)
 
-**Export.** 1080p, 2K or 4K, 24/30/60 fps, H.264 or H.265, adjustable bitrate, with a progress bar and time estimate.
+**Export tab.** Exporting has its own tab: pick the resolution, frame rate, video format, file type and audio quality on the left, and **watch your video being made** on the right, with a progress bar, time so far and time left.
 
-![Export dialog](docs/screenshots/export.png)
+![Export tab](docs/screenshots/export.png)
+
+**Library.** Keep the videos, images and sounds you use again and again (an intro, a logo, music, sound effects) in one folder and use them from any project.
+
+![Library panel](docs/screenshots/library.png)
 
 ## Features
 
@@ -52,6 +56,7 @@
 - **Groups:** group any mix of video and audio clips so they move together; ungroup when you are done.
 - **Readable lengths:** long clips show their length as minutes and seconds (for example 52m 19s) instead of a big number of seconds.
 - **Freeze frame:** save the exact frame under the playhead as an image and insert it. Drag its edge (or type seconds) to hold it as long as you like.
+- **Inspector sections that fold away:** *Transform and keyframes* and *Transition* are dropdowns you can open and close; the editor remembers which ones you left open.
 - **Transform box:** select a clip and a box appears on the preview. Drag inside it to **move**, drag a corner inwards to make the picture **smaller** (outwards for bigger), and drag the round handle to **rotate**. Press **Free transform** to let the corners (and the side handles) **stretch** the picture wider or taller instead.
 - **Keyframes made easy:** press the diamond to add a keyframe, move the playhead, then change the picture (drag it on the preview or use the sliders). Another keyframe is added for you. Position, scale, stretch, rotation and opacity animate together, and each can also have its own diamond. Keyframes show on the timeline and can be dragged to retime.
 - **Easing:** choose how the change between two keyframes feels, from seven ready-made styles or your own **Custom curve** (see [Easing](#easing) below).
@@ -59,7 +64,15 @@
 - **Overlay video tracks:** **Add track** asks for a **Video** or **Audio** track. A video track is a layer that sits on top of the one below it, and its clips can start at any time (picture-in-picture, stickers, reaction videos). A video's own sound comes along as grouped audio.
 - **Rearrange and rename tracks:** drag any track by its label to move it up or down (higher video tracks are drawn on top, and you can pull audio tracks up next to the video). Double-click a track's name to rename it.
 - **Waveforms:** audio clips show their sound as a sharp waveform (drawn like DaVinci Resolve's), so you can see where speech or a beat starts and stops.
-- **Hide panels:** the Media and Inspector panels can be folded away to give the preview more room.
+- **Hide panels:** the Media, Library and Inspector panels can be folded away to give the preview more room.
+- **Bigger timeline scroll bar:** easy to grab when you are scrolling through a long recording.
+- **Smooth pause:** pausing the preview keeps the picture on screen instead of flashing.
+### Library
+- The **Library** panel (next to the Media panel; it starts folded away, click **Library** to open it) shows everything in **Documents > Vibe Video Editor Library**.
+- Drag an item onto the timeline, or double-click it to add it. Videos, images and audio files all work, and they are only added to a project when you use them.
+- **Add files…** copies files into the library, **Open library folder** opens it in Explorer, and the refresh button picks up files you dropped in by hand.
+- If the library is empty it says **Upload your own** and gives you a button to the folder.
+
 ### Easing
 Easing decides how a value (position, size, rotation, opacity or the warp) travels from one keyframe to the next. Stand on a keyframe (the diamond is filled) and pick its easing in the Inspector. The easing belongs to the keyframe it starts from, and applies to the stretch up to the next keyframe.
 
@@ -106,11 +119,14 @@ Every keyframe can have its own easing, and the **Funny warp** keyframes have th
 - **Home page** with your recent projects, and **tabs** so you can work on several projects at once.
 
 ### Export
+- Exporting has its **own tab** (press **Export video…** at the top right). It stays open next to your project, shows its progress in the tab title, and you can keep editing while it is open.
+- **Watch it render:** the right side shows the video as it is being made. Effects (transitions, motion, overlays) show frame by frame, then a live preview of the final encode.
 - **1080p, 2K or 4K**, **24, 30 or 60 fps**, **H.264 or H.265**, adjustable **bitrate**, and a speed/quality setting.
+- **Graphics card encoding:** choose **NVIDIA (NVENC)**, **AMD (AMF)** or **Intel (Quick Sync)** as the encoder to let your graphics card do the video encoding. It needs a graphics card with a video encoder (an NVIDIA GeForce GTX 600 or newer or any RTX, an AMD Radeon RX 400 or newer, or Intel built-in graphics from the 2nd generation Core on) and up-to-date drivers. The Export tab tells you which graphics card it found and only lets you pick the ones that really work. In a test on an NVIDIA RTX 4080 SUPER, a 6-minute 2K clip exported about 4 to 5 times faster as H.265 and 10 to 40% faster as H.264. The processor option works on every PC.
+- **File type:** MP4, MKV or MOV. **Audio quality:** 128, 192, 256 or 320 kbps.
 - Mix all audio into one track, or **keep every track separate** in the file.
-- Progress bar with an estimated time left, and a Cancel button.
+- Progress bar with time so far and an estimate of the time left, and a Cancel button.
 - Powered by a bundled copy of FFmpeg, so there is nothing else to install.
-
 ## Install
 
 1. Open the [**Releases** page](https://github.com/phsrp/Vibe-video-editor/releases/latest).
@@ -152,13 +168,13 @@ Every shortcut can be changed under **⌨ Shortcuts** in the timeline toolbar.
 | Undo / Redo | `Ctrl+Z` / `Ctrl+Y` |
 | Save / Save as | `Ctrl+S` / `Ctrl+Shift+S` |
 | Open a project | `Ctrl+O` |
-| Export | `Ctrl+E` |
 
 ## Where things are stored
 
 | What | Where |
 |---|---|
 | Your projects | **Documents\Vibe Video Editor Projects** by default (or wherever you chose when saving the `.json` file). The **Projects folder** button on the Home page opens it |
+| Your library (videos, images and sounds you reuse) | **Documents\Vibe Video Editor Library**. The **Open library folder** button in the Library panel opens it |
 | Recovery copies of projects you have not saved yet | `%APPDATA%\vibe-video-editor\autosave` (they reopen by themselves) |
 | Settings, recent projects, caches | `%APPDATA%\vibe-video-editor` |
 | Your transitions folder | `%APPDATA%\vibe-video-editor\transitions` (also the **Transitions folder** button in the editor) |

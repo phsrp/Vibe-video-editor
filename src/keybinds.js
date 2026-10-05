@@ -3,7 +3,6 @@ export const ACTIONS = [
   { id: 'save', label: 'Save project', def: 'Ctrl+S' },
   { id: 'saveAs', label: 'Save project as…', def: 'Ctrl+Shift+S' },
   { id: 'open', label: 'Open project…', def: 'Ctrl+O' },
-  { id: 'export', label: 'Export video…', def: 'Ctrl+E' },
   { id: 'split', label: 'Split / cut at playhead', def: 'S' },
   { id: 'freeze', label: 'Freeze frame at playhead', def: 'F' },
   { id: 'group', label: 'Group selected', def: 'Ctrl+G' },
@@ -22,7 +21,9 @@ const KEY = 'vibe.keybinds'
 export function loadBinds() {
   const binds = Object.fromEntries(ACTIONS.map((a) => [a.id, a.def]))
   try {
-    Object.assign(binds, JSON.parse(localStorage.getItem(KEY) || '{}'))
+    const saved = JSON.parse(localStorage.getItem(KEY) || '{}')
+    // only shortcuts that still exist (the old Export shortcut is gone: Export is its own tab now)
+    for (const id of Object.keys(binds)) if (saved[id]) binds[id] = saved[id]
   } catch {}
   return binds
 }

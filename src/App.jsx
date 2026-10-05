@@ -4,6 +4,8 @@ import Home from './Home.jsx'
 import Icon from './Icon.jsx'
 import SettingsDialog from './SettingsDialog.jsx'
 import UpdateDialog from './UpdateDialog.jsx'
+import ExportTab from './ExportTab.jsx'
+import { cancelExport } from './exporter.js'
 import { loadBinds, saveBinds } from './keybinds.js'
 
 let tabCounter = 0
@@ -15,6 +17,7 @@ export default function App() {
   const [tabs, setTabs] = useState([]) // [{id, title, path, dirty, initial}]
   const [activeId, setActiveId] = useState('home')
   const handles = useRef({})
+  const [exports, setExports] = useState([]) // Export tabs: [{id, projectId, running, pct, done}]
   const [binds, setBinds] = useState(loadBinds)
   const [showSettings, setShowSettings] = useState(false)
   const [version, setVersion] = useState('')
@@ -59,6 +62,23 @@ export default function App() {
     setTabs((t) => [...t, { id, title: 'Untitled', path: initial && initial.file, dirty: false, initial }])
     setActiveId(id)
   }
+  // each project can have an Export tab next to it (settings, and the video as it is being made)
+  const openExport = (projectId) => {
+    const id = 'x' + projectId
+    setExports((e) => (e.some((x) => x.id === id) ? e : [...e, { id, projectId, running: false, pct: 0, done: false }]))
+    setActiveId(id)
+  }
+  const exportStatus = (id, st) => setExports((e) => e.map((x) => (x.id === id ? { ...x, ...st } : x)))
+  const closeExport = (id) => {
+    const x = exports.find((e) => e.id === id)
+    if (!x) return
+    if (x.running) {
+      if (!window.confirm('An export is still running. Cancel it and close this tab?')) return
+      cancelExport()
+    }
+    setExports((e) => e.filter((y) => y.id !== id))
+    if (activeId === id) setActiveId(tabs.some((t) => t.id === x.projectId) ? x.projectId : 'home')
+  }
   const onMeta = (id, meta) => setTabs((t) => t.map((x) => (x.id === id ? { ...x, ...meta } : x)))
   const registerHandle = (id, h) => {
     if (h) handles.current[id] = h
@@ -96,6 +116,15 @@ export default function App() {
         if (choice === 2) return
         if (choice === 0 && !(await h.save())) return
       }
+    }
+    // closing a project also closes its Export tab (an export that is running is cancelled)
+    const ex = exports.find((e) => e.projectId === id)
+    if (ex) {
+      if (ex.running) {
+        if (!window.confirm('An export of this project is still running. Cancel it and close the project?')) return
+        cancelExport()
+      }
+      setExports((e) => e.filter((y) => y.projectId !== id))
     }
     window.api.clearAutosave(id)
     const idx = tabs.findIndex((t) => t.id === id)
@@ -171,6 +200,39 @@ export default function App() {
             </button>
           </div>
         ))}
+        {exports.map((x) => {
+          const pt = tabs.find((t) => t.id === x.projectId)
+          return (
+            <div
+              key={x.id}
+              className={'tab export-tab' + (activeId === x.id ? ' on' : '')}
+              onClick={() => setActiveId(x.id)}
+              onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+              onAuxClick={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault()
+                  closeExport(x.id)
+                }
+              }}
+              title="Export"
+            >
+              <Icon name="upload" size={12} />
+              <span className="tab-title">Export · {pt ? pt.title : ''}</span>
+              {x.running && <span className="tab-pct">{Math.round(x.pct)}%</span>}
+              {x.done && !x.running && <span className="tab-pct done">done</span>}
+              <button
+                className="tab-x"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  closeExport(x.id)
+                }}
+                title="Close this tab"
+              >
+                <Icon name="x" size={11} />
+              </button>
+            </div>
+          )
+        })}
         <button className="tab-plus" onClick={() => newTab()} title="New project">
           <Icon name="plus" size={14} />
         </button>
@@ -205,7 +267,20 @@ export default function App() {
             onMeta={onMeta}
             onNew={() => newTab()}
             onOpen={openDialog}
+            onExport={() => openExport(t.id)}
             registerHandle={registerHandle}
+          />
+        ))}
+        {exports.map((x) => (
+          <ExportTab
+            key={x.id}
+            active={activeId === x.id}
+            getProject={() => {
+              const h = handles.current[x.projectId]
+              const pt = tabs.find((t) => t.id === x.projectId)
+              return { state: h.getState(), name: pt && pt.title !== 'Untitled' ? pt.title : 'My video' }
+            }}
+            onStatus={(st) => exportStatus(x.id, st)}
           />
         ))}
       </div>

@@ -67,7 +67,10 @@ function buildFinal(plan, dir) {
     filters.push(`[${i}:v:0]${pre},setpts=PTS-STARTPTS,tpad=stop=4:stop_mode=clone,trim=end_frame=${s.frames},setpts=PTS-STARTPTS[v${k}]`)
     vlabels.push(`[v${k}]`)
   })
-  filters.push(`${vlabels.join('')}concat=n=${vlabels.length}:v=1:a=0[vout]`)
+  // the picture is also saved as a small preview image twice a second, which the Export tab shows while it works
+  filters.push(`${vlabels.join('')}concat=n=${vlabels.length}:v=1:a=0[vcat]`)
+  filters.push('[vcat]split=2[vout][vprev]')
+  filters.push('[vprev]fps=2,scale=640:-2[vpv]')
 
   // audio: one chain per clip, mixed per track
   const tlabels = []
@@ -110,28 +113,71 @@ function buildFinal(plan, dir) {
   const br = plan.bitrateMbps
   const args = ['-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', ...inputs, '-filter_complex_script', scriptPath, '-map', '[vout]']
   aouts.forEach((l) => args.push('-map', l))
-  if (plan.codec === 'h265') {
+  // the video encoder: the processor (x264 / x265), or a graphics card (NVIDIA NVENC, AMD AMF, Intel Quick Sync)
+  const hevc = plan.codec === 'h265'
+  const speed = plan.speed || 'balanced'
+  const enc = plan.encoder || 'cpu'
+  if (enc === 'nvenc') {
+    args.push('-c:v', hevc ? 'hevc_nvenc' : 'h264_nvenc', '-preset', { fast: 'p3', balanced: 'p5', best: 'p7' }[speed] || 'p5', '-rc', 'vbr')
+    if (hevc) args.push('-tag:v', 'hvc1')
+  } else if (enc === 'amf') {
+    args.push('-c:v', hevc ? 'hevc_amf' : 'h264_amf', '-quality', { fast: 'speed', balanced: 'balanced', best: 'quality' }[speed] || 'balanced', '-rc', 'vbr_peak')
+    if (hevc) args.push('-tag:v', 'hvc1')
+  } else if (enc === 'qsv') {
+    args.push('-c:v', hevc ? 'hevc_qsv' : 'h264_qsv', '-preset', { fast: 'veryfast', balanced: 'medium', best: 'slow' }[speed] || 'medium')
+    if (hevc) args.push('-tag:v', 'hvc1')
+  } else if (hevc) {
     args.push('-c:v', 'libx265', '-preset', plan.preset, '-tag:v', 'hvc1', '-x265-params', 'log-level=error')
   } else {
     args.push('-c:v', 'libx264', '-preset', plan.preset, '-profile:v', 'high')
   }
   args.push('-b:v', `${br}M`, '-maxrate', `${(br * 1.5).toFixed(2)}M`, '-bufsize', `${(br * 3).toFixed(2)}M`, '-pix_fmt', 'yuv420p', '-r', String(plan.fps))
   if (aouts.length) {
-    args.push('-c:a', 'aac', '-b:a', '192k', '-ar', '48000')
+    args.push('-c:a', 'aac', '-b:a', `${plan.audioKbps || 192}k`, '-ar', '48000')
     // MP4 keeps a track's name in "handler_name" (players show it when you switch audio tracks)
     if (aouts.length > 1)
       plan.audio.forEach((t, i) => args.push(`-metadata:s:a:${i}`, `title=${t.name}`, `-metadata:s:a:${i}`, `handler_name=${t.name}`))
   }
-  args.push('-movflags', '+faststart', plan.out)
+  if (/\.(mp4|mov)$/i.test(plan.out)) args.push('-movflags', '+faststart')
+  args.push(plan.out)
+  args.push('-map', '[vpv]', '-q:v', '6', '-update', '1', '-f', 'image2', path.join(dir, 'preview.jpg'))
   return args
 }
 
+// Which graphics-card encoders really work on this PC: each one is tried on a few test frames.
+let encoderInfo = null
+async function detectEncoders(ffmpegPath) {
+  const gpus = await new Promise((resolve) => {
+    require('child_process').execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }'],
+      { windowsHide: true, timeout: 15000 },
+      (err, out) => resolve(err ? [] : String(out).split(/\r?\n/).map((s) => s.trim()).filter(Boolean))
+    )
+  })
+  const tryEnc = (codec) =>
+    new Promise((resolve) => {
+      const p = spawn(ffmpegPath, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=30', '-frames:v', '5', '-c:v', codec, '-pix_fmt', 'yuv420p', '-f', 'null', '-'], { windowsHide: true })
+      p.on('error', () => resolve(false))
+      p.on('close', (code) => resolve(code === 0))
+    })
+  const [nvenc, amf, qsv] = await Promise.all([tryEnc('h264_nvenc'), tryEnc('h264_amf'), tryEnc('h264_qsv')])
+  return { gpus, available: [nvenc && 'nvenc', amf && 'amf', qsv && 'qsv'].filter(Boolean) }
+}
+
 function register({ ffmpegPath, getWindow }) {
-  ipcMain.handle('export:chooseOutput', async (_e, name) => {
+  ipcMain.handle('export:encoders', async () => {
+    if (!encoderInfo) encoderInfo = await detectEncoders(ffmpegPath)
+    return encoderInfo
+  })
+
+  ipcMain.handle('export:chooseOutput', async (_e, name, ext) => {
+    if (process.env.VIBE_SELFTEST && process.env.VIBE_TEST_OUT) return process.env.VIBE_TEST_OUT // developer self-test: no dialog
+    const kind = { mp4: 'MP4 video', mkv: 'MKV video', mov: 'MOV video' }[ext] || 'MP4 video'
     const r = await dialog.showSaveDialog(getWindow(), {
       title: 'Export video',
       defaultPath: name,
-      filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
+      filters: [{ name: kind, extensions: [ext || 'mp4'] }],
     })
     return r.canceled ? null : r.filePath
   })
