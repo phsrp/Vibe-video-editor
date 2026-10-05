@@ -647,7 +647,8 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
   }
 
   // ruler ticks
-  const step = zoom >= 150 ? 1 : zoom >= 60 ? 2 : zoom >= 30 ? 5 : 10
+  // the smallest "nice" step that keeps the labels at least 80px apart, however far out you zoom
+  const step = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 18000, 36000].find((n) => n * zoom >= 80) || 36000
   const ticks = []
   for (let s = 0; s <= total + 15; s += step) ticks.push(s)
 

@@ -1,2 +1,1 @@
-- Masks can now follow a moving subject: after you draw a mask, a popup asks if it should track the subject and for how long
-- Every mask shows as a Mask bar on its clip in the timeline: drag its ends to make it shorter or longer, drag it to move it, or press x to remove it
+- Fixed: the time labels along the top of the timeline no longer pile up when you zoom out; they spread out to minutes and hours
