@@ -4,6 +4,7 @@ import { aspectRatio } from './state.js'
 import { speedOf, srcAt, layout, overlayLayout, totalDuration, projectDuration, videoRowsBottomUp, hasAttached, streamCount, toUrl } from './state.js'
 import { createRenderer } from './glRenderer.js'
 import { evalTransform, evalWarp, hasTransform } from './motion.js'
+import { maskAt } from './masks.js'
 
 export const RESOLUTIONS = { '720p': [1280, 720], '1080p': [1920, 1080], '2K': [2560, 1440], '4K': [3840, 2160] }
 // the size of the exported picture: the short side is 1080 / 1440 / 2160 and the long side follows the project's shape
@@ -267,10 +268,10 @@ export async function runExport({ state, settings, transitions, outPath, onProgr
                 textCvs.set(key, cv)
               }
               drawText(cv, sd.clip.text, sd.tl0 + i / fps - sd.clip.start, sd.clip.dur)
-              return { el: cv, w, h, tf: evalTransform(sd.clip, ts), warp: evalWarp(sd.clip, ts), fx: sd.clip.fx, mask: sd.clip.mask }
+              return { el: cv, w, h, tf: evalTransform(sd.clip, ts), warp: evalWarp(sd.clip, ts), fx: sd.clip.fx, mask: maskAt(sd.clip, ts) }
             }
             const img = imgOf.get(`${li}${which}`)
-            return { el: img, w: img.naturalWidth, h: img.naturalHeight, tf: evalTransform(sd.clip, ts), warp: evalWarp(sd.clip, ts), fx: sd.clip.fx, mask: sd.clip.mask }
+            return { el: img, w: img.naturalWidth, h: img.naturalHeight, tf: evalTransform(sd.clip, ts), warp: evalWarp(sd.clip, ts), fx: sd.clip.fx, mask: maskAt(sd.clip, ts) }
           }
           renderer.renderLayers(
             s.layers.map((l, li) => ({

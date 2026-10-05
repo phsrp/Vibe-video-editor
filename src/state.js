@@ -885,6 +885,17 @@ export function reducer(state, a) {
       }
       return a.live ? { ...state, ...mapClips(state, f) } : commit(state, mapClips(state, f))
     }
+    // result of tracking: the mask lasts from..to (source seconds) and follows the subject with Mask X / Y / size keyframes.
+    // keys = [{t, mx, my, ms}]
+    case 'setMaskTrack': {
+      const f = (c) => {
+        if (c.id !== a.id || !c.mask) return c
+        const anim = { ...(c.anim || {}) }
+        for (const k of ['mx', 'my', 'ms']) anim[k] = a.keys.map((q) => ({ t: q.t, v: q[k], ease: 'linear' }))
+        return { ...c, anim, mask: { ...c.mask, from: a.from, to: a.to } }
+      }
+      return commit(state, mapClips(state, f))
+    }
     case 'clearMask': {
       const f = (c) => {
         if (c.id !== a.id || !c.mask) return c

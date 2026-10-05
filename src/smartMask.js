@@ -1,7 +1,7 @@
 // Smart mask: draw a loop around a subject and an AI model (MobileSAM, run on your own PC by onnxruntime-web)
 // finds its exact outline. The model files are downloaded once from Hugging Face (see electron/main.js, 'models:*').
 import { toUrl } from './state.js'
-import { MAX_POLY } from './masks.js'
+import { MAX_POLY, polyCentre } from './masks.js'
 
 let ortPromise = null
 async function getOrt() {
@@ -161,6 +161,69 @@ function simplify(pts, tol) {
     }
   }
   return pts.filter((_, i) => keep[i])
+}
+
+// the outline made a little bigger around its middle (used as the "loop" that tells the AI where to look next)
+const grow = (pts, k) => {
+  const c = polyCentre(pts)
+  return pts.map((p) => [c[0] + (p[0] - c[0]) * k, c[1] + (p[1] - c[1]) * k])
+}
+const bboxSize = (pts) => {
+  const xs = pts.map((p) => p[0])
+  const ys = pts.map((p) => p[1])
+  return Math.sqrt(Math.max(1e-6, (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))))
+}
+
+// Follows a subject through a video. file = the video, startPts = its outline at second t0 of the file, the AI looks
+// again at each second in `times` (in the order they should be visited, the first is t0). Returns, for each time,
+// how far the outline's middle moved and how much its size changed since the start: [{t, mx, my, ms}] (percent).
+export async function trackSubject({ file, startPts, times, paths, onProgress, isCancelled }) {
+  const v = document.createElement('video')
+  v.muted = true
+  v.preload = 'auto'
+  v.src = toUrl(file)
+  await new Promise((res, rej) => {
+    v.onloadeddata = res
+    v.onerror = () => rej(new Error('The video could not be opened'))
+  })
+  const w = v.videoWidth
+  const h = v.videoHeight
+  const seek = (t) =>
+    new Promise((res) => {
+      const done = () => {
+        v.removeEventListener('seeked', done)
+        res()
+      }
+      v.addEventListener('seeked', done)
+      v.currentTime = t
+      setTimeout(done, 4000)
+    })
+  const c0 = polyCentre(startPts)
+  const s0 = bboxSize(startPts)
+  const out = []
+  let prev = startPts
+  try {
+    for (let i = 0; i < times.length; i++) {
+      if (isCancelled && isCancelled()) return null
+      onProgress && onProgress(i, times.length)
+      let pts = startPts
+      if (i > 0) {
+        await seek(times[i])
+        const found = await findSubject({ el: v, w, h, lasso: grow(prev, 1.15), paths, frameKey: 'trk:' + file + ':' + times[i] + ':' + Math.random() })
+        // lost it, or it jumped somewhere impossible: keep the last place
+        if (found && found.length >= 3 && Math.hypot(polyCentre(found)[0] - polyCentre(prev)[0], polyCentre(found)[1] - polyCentre(prev)[1]) < 0.3) pts = found
+        else pts = prev
+      }
+      prev = pts
+      const c = polyCentre(pts)
+      out.push({ t: times[i], mx: (c[0] - c0[0]) * 100, my: (c[1] - c0[1]) * 100, ms: Math.min(400, Math.max(10, (bboxSize(pts) / s0) * 100)) })
+    }
+  } finally {
+    v.removeAttribute('src')
+    v.load()
+  }
+  onProgress && onProgress(times.length, times.length)
+  return out
 }
 
 const cache = { el: null, key: '', embeddings: null, scale: 1 }

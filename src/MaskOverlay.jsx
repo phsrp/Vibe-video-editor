@@ -1,7 +1,85 @@
-import { useState } from 'react'
-import { layout, overlayLayout, soleVideoClip, srcAt, aspectRatio } from './state.js'
+import { useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { layout, overlayLayout, soleVideoClip, srcAt, speedOf, aspectRatio } from './state.js'
 import { evalTransform, evalProp, keyAt, PROPS, rectToFrame, frameToRect } from './motion.js'
-import { maskPlaced, polyCentre, MAX_POLY } from './masks.js'
+import { maskPlaced, polyCentre, MAX_POLY, maskAt } from './masks.js'
+
+// The question after a shape was drawn: follow the subject through the video, and for how long?
+function TrackDialog({ clip, state, media, dispatch, onClose }) {
+  const sp = speedOf(clip)
+  const ts = srcAt(clip, state.playhead)
+  const remain = Math.max(0.2, Math.round((clip.start + clip.dur - state.playhead) * 10) / 10)
+  const [secs, setSecs] = useState(Math.min(5, remain))
+  const [prog, setProg] = useState(null) // [done, total] while tracking
+  const [err, setErr] = useState('')
+  const cancel = useRef(false)
+  const canTrack = media && media.type === 'video' && clip.mask && clip.mask.shape === 'poly'
+  const run = async () => {
+    cancel.current = false
+    setErr('')
+    setProg([0, 1])
+    try {
+      const st = await window.api.modelsStatus()
+      const { trackSubject } = await import('./smartMask.js')
+      const span = Math.min(secs, remain)
+      const end = Math.min(clip.out, Math.max(clip.in, clip.reverse ? ts - span * sp : ts + span * sp))
+      const n = Math.max(2, Math.round(span / Math.max(0.25, span / 40)) + 1) // each look takes about 2 seconds
+      const times = Array.from({ length: n }, (_, i) => ts + ((end - ts) * i) / (n - 1))
+      const keys = await trackSubject({
+        file: media.path,
+        startPts: clip.mask.pts,
+        times,
+        paths: st.paths,
+        onProgress: (d, t) => setProg([d, t]),
+        isCancelled: () => cancel.current,
+      })
+      if (!keys) return onClose()
+      keys.sort((p, q) => p.t - q.t)
+      dispatch({ type: 'setMaskTrack', id: clip.id, keys, from: Math.min(ts, end), to: Math.max(ts, end) })
+      onClose()
+    } catch (e) {
+      setProg(null)
+      setErr('Tracking failed: ' + String((e && e.message) || e))
+    }
+  }
+  return createPortal(
+    <div className="modal-bg">
+      <div className="modal">
+        <h3>Follow the subject?</h3>
+        {prog ? (
+          <>
+            <p className="hint-sm">Tracking… the AI is finding the subject in each moment ({prog[0]} of {prog[1]}).</p>
+            <div className="bar"><div style={{ width: (100 * prog[0]) / Math.max(1, prog[1]) + '%', height: 6, background: 'var(--accent2)', borderRadius: 3 }} /></div>
+            <div className="btn-row" style={{ marginTop: 12 }}>
+              <button onClick={() => (cancel.current = true)}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="hint-sm">
+              {canTrack
+                ? 'The mask can follow the subject as the video plays. The mask then lasts only for the time you choose; you can change that on the timeline afterwards.'
+                : 'Tracking works on video clips with a drawn or smart mask. The mask now covers the whole clip; shorten it on the timeline.'}
+            </p>
+            {canTrack && (
+              <label className="minput" style={{ gridTemplateColumns: '1fr 80px 40px' }}>
+                <span>Follow it for</span>
+                <input type="number" min="0.5" max={remain} step="0.5" value={secs} onChange={(e) => setSecs(Math.max(0.5, Math.min(remain, +e.target.value || 0.5)))} />
+                <span className="unit">sec</span>
+              </label>
+            )}
+            {err && <p className="hint-sm" style={{ color: 'var(--love, #eb6f92)' }}>{err}</p>}
+            <div className="btn-row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
+              <button onClick={onClose}>{canTrack ? "Don't track" : 'OK'}</button>
+              {canTrack && <button className="primary" onClick={run}>Track</button>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  )
+}
 
 
 // Douglas-Peucker: fewer points that still follow the line
@@ -66,6 +144,7 @@ const fewPoints = (pts) => {
 // change its size and turn it, or drag the points of a drawn shape. In "draw" mode, draw around the subject.
 export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFrame }) {
   const [busy, setBusy] = useState('') // text shown while the AI is working
+  const [ask, setAsk] = useState(false) // the "follow the subject?" question is open
   const RATIO = aspectRatio(state)
   const id = soleVideoClip(state)
   const clip = id && (layout(state.clips).find((c) => c.id === id) || overlayLayout(state.overlayClips).find((c) => c.id === id))
@@ -79,6 +158,7 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
   const ts = srcAt(clip, state.playhead)
   const ma = media.width / media.height
   const s = [Math.max(1, RATIO / ma), Math.max(1, ma / RATIO)]
+  if (!drawing && !ask && !maskAt(clip, ts)) return null // the mask does not last until here
   const tf = evalTransform(clip, ts)
   const BW = box.w
   const BH = box.h
@@ -134,8 +214,9 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
         if (raw.length < 4) return
         const keep = { feather: clip.mask ? clip.mask.feather : 6, invert: clip.mask ? clip.mask.invert : false, expand: clip.mask ? clip.mask.expand : 0 }
         if (!smart) {
-          dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts: fewPoints(raw), ...keep } })
+          dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts: fewPoints(raw), from: undefined, to: undefined, ...keep } })
           setMode('mask')
+          setAsk(true)
           return
         }
         // smart: the AI looks at this frame and finds the exact outline of what is inside the loop
@@ -152,9 +233,10 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
             const st = await window.api.modelsStatus()
             const pts = await findSubject({ el: frame.el, w: frame.w, h: frame.h, lasso: fewPoints(raw), paths: st.paths, frameKey: clip.id + ':' + ts.toFixed(3) })
             if (pts && pts.length >= 3) {
-              dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts, ...keep } })
+              dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts, from: undefined, to: undefined, ...keep } })
               setMode('mask')
               setBusy('')
+              setAsk(true)
             } else {
               setBusy('No subject was found there. Try drawing the loop a little bigger.')
               setTimeout(() => setBusy(''), 3000)
@@ -251,6 +333,7 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
 
   return (
     <div className="xf-overlay mask-ov">
+      {ask && <TrackDialog clip={clip} state={state} media={media} dispatch={dispatch} onClose={() => setAsk(false)} />}
       <svg width={BW} height={BH} viewBox={`0 0 ${BW} ${BH}`}>
         <polygon points={outline.map((p) => p.join(',')).join(' ')} className="mask-line" onPointerDown={dragBody} style={{ pointerEvents: 'all', cursor: 'move' }} />
         {rotPt && <line x1={(outline[0][0] + outline[1][0]) / 2} y1={(outline[0][1] + outline[1][1]) / 2} x2={rotPt[0]} y2={rotPt[1]} className="xf-line" />}

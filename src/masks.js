@@ -8,7 +8,22 @@ export const MAX_POLY = 64
 
 const NONE = { mk: [0, 0, 0, 0], mb: [0, 0, 0, 0], mr: [1, 0], pts: new Float32Array((MAX_POLY + 1) * 2), n: 0 }
 
-export const polyCentre = (pts) => {
+// A mask can last only part of a clip: mask.from / mask.to are seconds of the ORIGINAL file (like keyframes).
+// Without them it lasts the whole clip. maskAt gives the mask that is active at source second ts (or undefined).
+export const maskAt = (clip, ts) => {
+  const m = clip && clip.mask
+  if (!m) return undefined
+  if (m.from != null && ts < m.from - 0.0005) return undefined
+  if (m.to != null && ts > m.to + 0.0005) return undefined
+  return m
+}
+// the part of the clip (source seconds) the mask covers
+export const maskSpan = (clip) => {
+  const m = clip.mask
+  return [Math.max(clip.in, m.from != null ? m.from : clip.in), Math.min(clip.out, m.to != null ? m.to : clip.out)]
+}
+
+export const polyCentre =(pts) => {
   if (!pts.length) return [0.5, 0.5]
   return [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length]
 }

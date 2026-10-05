@@ -3,7 +3,8 @@ import { keyTimes } from './motion.js'
 import Icon from './Icon.jsx'
 import Wave from './Wave.jsx'
 import MiniMap from './MiniMap.jsx'
-import { srcAt, tlOf, speedOf, layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKeys, audioSource, fmtTime, fmtDur, toUrl, uid, hasAttached, canGroup, canUngroup, hasClipboard } from './state.js'
+import { maskSpan } from './masks.js'
+import { srcAt, tlOf, speedOf, lenOf, layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKeys, audioSource, fmtTime, fmtDur, toUrl, uid, hasAttached, canGroup, canUngroup, hasClipboard } from './state.js'
 import { labelColor } from './labels.js'
 
 const TRACK_PAD = 12
@@ -326,6 +327,63 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+  }
+  // ---- the mask bar on a clip: drag its ends to make the mask shorter / longer, drag the middle to move it, x removes it
+  const startMaskDrag = (e, c, part) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    e.preventDefault()
+    dispatch({ type: 'select', id: c.id })
+    const [a0, b0] = maskSpan(c)
+    const t0 = Math.min(tlOf(c, a0), tlOf(c, b0))
+    const t1 = Math.max(tlOf(c, a0), tlOf(c, b0))
+    const lo = c.start
+    const hi = c.start + lenOf(c)
+    const x0 = e.clientX
+    let started = false
+    const move = (ev) => {
+      if (!started && Math.abs(ev.clientX - x0) < 3) return
+      if (!started) {
+        started = true
+        dispatch({ type: 'checkpoint' })
+      }
+      const d = (ev.clientX - x0) / zoom
+      let L = t0
+      let R = t1
+      if (part === 'l') L = Math.min(R - 0.1, Math.max(lo, t0 + d))
+      else if (part === 'r') R = Math.max(L + 0.1, Math.min(hi, t1 + d))
+      else {
+        const dd = Math.min(hi - t1, Math.max(lo - t0, d))
+        L = t0 + dd
+        R = t1 + dd
+      }
+      const s1 = srcAt(c, L)
+      const s2 = srcAt(c, R)
+      dispatch({ type: 'setMask', id: c.id, patch: { from: Math.min(s1, s2), to: Math.max(s1, s2) }, live: true })
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const maskBar = (c) => {
+    if (!c.mask) return null
+    const [a, b] = maskSpan(c)
+    if (b <= a) return null
+    const x1 = (tlOf(c, a) - c.start) * zoom
+    const x2 = (tlOf(c, b) - c.start) * zoom
+    const left = Math.min(x1, x2)
+    const w = Math.max(10, Math.abs(x2 - x1))
+    return (
+      <div className="mask-bar" style={{ left, width: w }} onPointerDown={(e) => startMaskDrag(e, c, 'm')} title="Mask: drag the ends to make it shorter or longer, drag the middle to move it">
+        <div className="mask-edge l" onPointerDown={(e) => startMaskDrag(e, c, 'l')} />
+        <span>Mask</span>
+        <button className="mask-x" title="Remove the mask" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); dispatch({ type: 'clearMask', id: c.id }) }}>×</button>
+        <div className="mask-edge r" onPointerDown={(e) => startMaskDrag(e, c, 'r')} />
+      </div>
+    )
   }
   // ---- keyframe markers on a clip: click = jump to it, drag = move it in time
   const startKfDrag = (e, c, t0) => {
@@ -670,6 +728,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                   .map((t) => (
                     <div key={t.toFixed(3)} className="kf" style={{ left: (tlOf(c, t) - c.start) * zoom }} onPointerDown={(e) => startKfDrag(e, c, t)} title="Keyframe: click to jump to it, drag to move it" />
                   ))}
+                {maskBar(c)}
                 <div className="handle left" onPointerDown={(e) => startTrim(e, c, 'in')} />
                 <span className="clip-name">{c.groupId && <Icon name="link" size={11} />}{m.name}</span>
                 <span className="clip-dur">{fmtDur(c.dur)}{silenced ? ' · no audio' : ''}</span>
@@ -722,6 +781,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                       .map((t) => (
                         <div key={t.toFixed(3)} className="kf" style={{ left: (tlOf(c, t) - c.start) * zoom }} onPointerDown={(e) => startKfDrag(e, c, t)} title="Keyframe: click to jump to it, drag to move it" />
                       ))}
+                    {maskBar(c)}
                     <div className="handle left" onPointerDown={(e) => startTrimOverlay(e, c, 'in')} />
                     <span className="clip-name">{c.groupId && <Icon name="link" size={11} />}{m.name}</span>
                     <span className="clip-dur">{fmtDur(c.dur)}</span>

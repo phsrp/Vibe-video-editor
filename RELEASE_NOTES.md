@@ -1,6 +1,2 @@
-- BIG UPDATE: the biggest one yet, with 19 new features
-- New: text and titles, masks (rectangle, ellipse, freehand loop) and Smart select: an AI that finds a subject's exact edges (download the model once, the button is greyed out until then)
-- New: Colour tab with an Apply button, speed and reverse, blur / sharpen / vignette / glow and green-screen (chroma key)
-- New: vertical, square and other video shapes, export presets, sound-only export, loudness normalising and voice-over recording
-- New: snapping, markers, copy / paste / duplicate, lock and hide tracks, colour labels, zoom to fit and an optional mini timeline
-- New: version history, to bring back an earlier copy of a project
+- Masks can now follow a moving subject: after you draw a mask, a popup asks if it should track the subject and for how long
+- Every mask shows as a Mask bar on its clip in the timeline: drag its ends to make it shorter or longer, drag it to move it, or press x to remove it

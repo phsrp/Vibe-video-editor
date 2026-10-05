@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRenderer } from './glRenderer.js'
 import { evalTransform, evalWarp } from './motion.js'
+import { maskAt } from './masks.js'
 import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl, srcAt, speedOf, aspectRatio, previewSize } from './state.js'
 import WarpOverlay from './WarpOverlay.jsx'
 import { drawText, loadFont } from './textRender.js'
@@ -273,13 +274,13 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
           A.tf = evalTransform(cA, motionAt(cA))
           A.warp = evalWarp(cA, motionAt(cA))
           A.fx = cA.fx
-          A.mask = cA.mask
+          A.mask = maskAt(cA, motionAt(cA))
         }
         if (B) {
           B.tf = evalTransform(cB, motionAt(cB))
           B.warp = evalWarp(cB, motionAt(cB))
           B.fx = cB.fx
-          B.mask = cB.mask
+          B.mask = maskAt(cB, motionAt(cB))
         }
         if (cB && B && A) layerFor.main = { A, B, name: cB.transition && cB.transition.name, progress: (t - cB.start) / cB.ov }
         else if (A) layerFor.main = { A }
@@ -301,7 +302,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         A.tf = evalTransform(c, motionAt(c))
         A.warp = evalWarp(c, motionAt(c))
         A.fx = c.fx
-        A.mask = c.mask
+        A.mask = maskAt(c, motionAt(c))
         layerFor['v:' + tr.id] = { A }
       }
       for (const [id, e] of els.current) {

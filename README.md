@@ -74,7 +74,13 @@
 ### Titles, text and masks
 - **Text and titles:** press **Text** (or `T`) to add text at the playhead. Pick a font, size, colour, outline, shadow or background box, and how it appears and disappears (fade, pop, slide up, typewriter). Quick looks: Title, Subtitle, Lower third, Neon and Typed. Text moves, scales, rotates and animates with keyframes like any clip.
 - **Masks:** show only part of a clip with a **rectangle**, an **ellipse**, or a shape you **draw freehand around a subject** (a lasso). Add a soft edge, grow or shrink it, or invert it. The mask has its own Mask X / Y / size keyframes, so it can follow a subject that moves.
-- **Smart select (AI):** draw a loose loop around a subject and an AI model finds its exact edges (on the frame you are looking at), turning it into a mask. It runs on your own PC, with no account and no internet once the model is downloaded. The button is **greyed out until you download the model** (about 45 MB, a one-time download from the Mask section of the Inspector). It works best on a clear subject; for a subject that moves, use the Mask X / Y keyframes to follow it.
+- **Smart select (AI):** draw a loose loop around a subject and an AI model finds its exact edges (on the frame you are looking at), turning it into a mask. It runs on your own PC, with no account and no internet once the model is downloaded. The button is **greyed out until you download the model** (about 45 MB, a one-time download from the Mask section of the Inspector). It works best on a clear subject.
+- **Mask tracking:** after you draw a freehand or smart mask on a video clip, a popup asks **"Follow the subject?"** and for how long. Choose **Track** and the AI looks for the subject again through that time (about 2 seconds of waiting per look, with a progress bar and a Cancel button) and moves and resizes the mask to follow it. It follows the subject's position and size, not its changing outline. Choose **Don't track** and the mask stays put for the whole clip.
+- **Mask bar on the timeline:** every mask shows as a purple **Mask** bar on its clip. Drag its ends to make the mask shorter or longer, drag the middle to move it, or press **x** to delete it. Outside the bar the clip shows normally.
+
+![The follow-the-subject popup](docs/screenshots/mask-track-popup.png)
+
+![A tracked mask and its bar on the timeline](docs/screenshots/mask-track-bar.png)
 
 ![Smart select cutting a subject out of its background](docs/screenshots/smart-mask.png)
 

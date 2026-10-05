@@ -146,6 +146,13 @@ button.mini.on { background: color-mix(in srgb, var(--love) 25%, var(--panel2));
 /* keyframe markers on a clip */
 .kf { position: absolute; bottom: 5px; width: 11px; height: 11px; margin-left: -5px; background: var(--accent2); border: 1px solid var(--bg); transform: rotate(45deg); z-index: 4; cursor: ew-resize; }
 .kf:hover { background: var(--text); }
+/* the mask on a clip: a bar you can shorten, lengthen, move or remove */
+.mask-bar { position: absolute; top: 21px; height: 15px; z-index: 3; display: flex; align-items: center; justify-content: center; border-radius: 4px; background: color-mix(in srgb, var(--iris, #c4a7e7) 75%, transparent); border: 1px solid var(--iris, #c4a7e7); color: #fff; font-size: 10px; cursor: grab; overflow: hidden; }
+.mask-bar span { pointer-events: none; text-shadow: 0 1px 2px #000; }
+.mask-edge { position: absolute; top: 0; bottom: 0; width: 6px; cursor: ew-resize; background: rgba(255,255,255,.55); }
+.mask-edge.l { left: 0; } .mask-edge.r { right: 0; }
+.mask-x { position: absolute; right: 8px; padding: 0 4px; line-height: 12px; height: 13px; font-size: 12px; background: transparent; border: none; color: #fff; cursor: pointer; }
+.mask-x:hover { background: rgba(0,0,0,.35); }
 
 .aclip { position: absolute; top: 5px; bottom: 5px; border-radius: 5px; overflow: hidden; font-size: 10px; color: #fff; padding: 2px 8px; white-space: nowrap; border: 1px solid transparent; cursor: grab; }
 .aclip span { display: inline-flex; align-items: center; gap: 4px; pointer-events: none; text-shadow: 0 1px 2px #000; }
