@@ -11,7 +11,7 @@ const copyOrt = () => ({
     const from = path.resolve('node_modules/onnxruntime-web/dist')
     const to = path.resolve('dist/ort')
     fs.mkdirSync(to, { recursive: true })
-    for (const f of ['ort-wasm-simd-threaded.wasm', 'ort-wasm-simd-threaded.mjs']) fs.copyFileSync(path.join(from, f), path.join(to, f))
+    for (const f of ['ort-wasm-simd-threaded.wasm', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.asyncify.wasm', 'ort-wasm-simd-threaded.asyncify.mjs']) fs.copyFileSync(path.join(from, f), path.join(to, f))
   },
 })
 

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { layout, overlayLayout, soleVideoClip, srcAt, speedOf, aspectRatio } from './state.js'
 import { evalTransform, evalProp, keyAt, PROPS, rectToFrame, frameToRect } from './motion.js'
@@ -20,10 +20,12 @@ function TrackDialog({ clip, state, media, dispatch, onClose }) {
     setProg([0, 1])
     try {
       const st = await window.api.modelsStatus()
-      const { trackSubject } = await import('./smartMask.js')
+      const { trackSubject, engineKind } = await import('./smartMask.js')
+      const kind = await engineKind(st.paths)
       const span = Math.min(secs, remain)
       const end = Math.min(clip.out, Math.max(clip.in, clip.reverse ? ts - span * sp : ts + span * sp))
-      const n = Math.max(2, Math.round(span / Math.max(0.25, span / 40)) + 1) // each look takes about 2 seconds
+      // on the graphics card a look takes a fraction of a second, so look often; on the processor about 2 seconds
+      const n = Math.max(2, kind === 'gpu' ? Math.round(span / Math.max(0.1, span / 150)) + 1 : Math.round(span / Math.max(0.25, span / 40)) + 1)
       const times = Array.from({ length: n }, (_, i) => ts + ((end - ts) * i) / (n - 1))
       const keys = await trackSubject({
         file: media.path,
@@ -49,7 +51,7 @@ function TrackDialog({ clip, state, media, dispatch, onClose }) {
         {prog ? (
           <>
             <p className="hint-sm">Tracking… the AI is finding the subject in each moment ({prog[0]} of {prog[1]}).</p>
-            <div className="bar"><div style={{ width: (100 * prog[0]) / Math.max(1, prog[1]) + '%', height: 6, background: 'var(--accent2)', borderRadius: 3 }} /></div>
+            <div className="bar"><div className="bar-fill" style={{ width: (100 * prog[0]) / Math.max(1, prog[1]) + '%' }} /></div>
             <div className="btn-row" style={{ marginTop: 12 }}>
               <button onClick={() => (cancel.current = true)}>Cancel</button>
             </div>
@@ -145,12 +147,33 @@ const fewPoints = (pts) => {
 export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFrame }) {
   const [busy, setBusy] = useState('') // text shown while the AI is working
   const [ask, setAsk] = useState(false) // the "follow the subject?" question is open
+  const [pen, setPen] = useState([]) // points placed so far with the "click points" tool
+  const [hoverPt, setHoverPt] = useState(null)
+  const penRef = useRef(null)
+  useEffect(() => {
+    if (mode !== 'maskpoly') {
+      setPen([])
+      return undefined
+    }
+    const key = (e) => {
+      const p = penRef.current
+      if (!p) return
+      if (e.key === 'Enter') p.finish(p.pen)
+      else if (e.key === 'Escape') setPen([])
+      else if (e.key === 'Backspace') setPen((q) => q.slice(0, -1))
+      else return
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [mode])
   const RATIO = aspectRatio(state)
   const id = soleVideoClip(state)
   const clip = id && (layout(state.clips).find((c) => c.id === id) || overlayLayout(state.overlayClips).find((c) => c.id === id))
   if (!clip) return null
   const smart = mode === 'maskdrawsmart' // the AI finds the subject's outline inside the loop that is drawn
-  const drawing = mode === 'maskdraw' || smart
+  const clicking = mode === 'maskpoly' // the shape is made by clicking its points one by one
+  const drawing = mode === 'maskdraw' || smart || clicking
   if (!clip.mask && !drawing) return null
   if (state.playhead < clip.start - 0.001 || state.playhead > clip.start + clip.dur + 0.001) return null
   const media = clip.text ? { width: RATIO * 1000, height: 1000 } : state.media.find((m) => m.id === clip.mediaId)
@@ -190,6 +213,56 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+  }
+
+  // ---- click mode (like a pen tool): click to place points, click the first point / double-click / Enter to finish
+  if (clicking) {
+    const keep = { feather: clip.mask ? clip.mask.feather : 6, invert: clip.mask ? clip.mask.invert : false, expand: clip.mask ? clip.mask.expand : 0 }
+    const finish = (pts) => {
+      if (pts.length < 3) return
+      dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts: pts.slice(0, MAX_POLY), from: undefined, to: undefined, ...keep } })
+      setPen([])
+      setMode('mask')
+      setAsk(true)
+    }
+    penRef.current = { pen, finish }
+    const where = (e) => {
+      const r = e.currentTarget.closest('.xf-overlay').getBoundingClientRect()
+      return [e.clientX - r.left, e.clientY - r.top]
+    }
+    const click = (e) => {
+      const [x, y] = where(e)
+      if (pen.length >= 3) {
+        const f = toPx(pen[0])
+        if (Math.hypot(f[0] - x, f[1] - y) < 12) return finish(pen)
+      }
+      const l = pen.length ? toPx(pen[pen.length - 1]) : null
+      if (l && Math.hypot(l[0] - x, l[1] - y) < 4) return // the second click of a double-click
+      if (pen.length >= MAX_POLY) return finish(pen)
+      setPen([...pen, fromPx(x, y)])
+    }
+    const px = pen.map(toPx)
+    const hv = hoverPt && pen.length ? hoverPt : null
+    return (
+      <div className="xf-overlay mask-draw">
+        <div className="mask-draw-hint">{pen.length ? 'Keep clicking around the subject. Click the first point, double-click or press Enter to finish. Backspace takes the last point back.' : 'Click to place the first point of the shape around the subject.'}</div>
+        <svg width={BW} height={BH} viewBox={`0 0 ${BW} ${BH}`}>
+          <rect
+            width={BW}
+            height={BH}
+            fill="transparent"
+            style={{ pointerEvents: 'all', cursor: 'crosshair' }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={click}
+            onDoubleClick={() => finish(pen)}
+            onPointerMove={(e) => setHoverPt(where(e))}
+            onPointerLeave={() => setHoverPt(null)}
+          />
+          {px.length > 0 && <polyline points={[...px, ...(hv ? [hv] : [])].map((q) => q.join(',')).join(' ')} className="mask-line" style={{ pointerEvents: 'none' }} fill="none" />}
+          {px.map((q, i) => <circle key={i} cx={q[0]} cy={q[1]} r={i === 0 && pen.length >= 3 ? 7 : 4} fill={i === 0 ? 'var(--accent2)' : '#fff'} stroke="#000" strokeWidth="1" style={{ pointerEvents: 'none' }} />)}
+        </svg>
+      </div>
+    )
   }
 
   // ---- draw mode: a freehand line around the subject becomes the shape
@@ -331,15 +404,46 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
       set({ pts })
     })
 
+  // double-click on the outline of a drawn shape adds a point there; right-click a point removes it
+  const addPoint = (e) => {
+    if (m.shape !== 'poly') return
+    const r = e.currentTarget.closest('.xf-overlay').getBoundingClientRect()
+    const p = fromPx(e.clientX - r.left, e.clientY - r.top)
+    const c = polyCentre(clip.mask.pts)
+    const q = [c[0] + (p[0] - (tf.mx || 0) / 100 - c[0]) / sc, c[1] + (p[1] - (tf.my || 0) / 100 - c[1]) / sc]
+    const pts = clip.mask.pts
+    if (pts.length >= MAX_POLY) return
+    let at = 0
+    let best = Infinity
+    pts.forEach((a, i) => {
+      const b = pts[(i + 1) % pts.length]
+      const dx = b[0] - a[0]
+      const dy = b[1] - a[1]
+      const t = Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / (dx * dx + dy * dy || 1e-9)))
+      const d = Math.hypot(q[0] - (a[0] + dx * t), q[1] - (a[1] + dy * t))
+      if (d < best) {
+        best = d
+        at = i
+      }
+    })
+    dispatch({ type: 'setMask', id: clip.id, patch: { pts: [...pts.slice(0, at + 1), q, ...pts.slice(at + 1)] } })
+  }
+  const removePoint = (e, i) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (clip.mask.pts.length <= 3) return
+    dispatch({ type: 'setMask', id: clip.id, patch: { pts: clip.mask.pts.filter((_, j) => j !== i) } })
+  }
+
   return (
     <div className="xf-overlay mask-ov">
       {ask && <TrackDialog clip={clip} state={state} media={media} dispatch={dispatch} onClose={() => setAsk(false)} />}
       <svg width={BW} height={BH} viewBox={`0 0 ${BW} ${BH}`}>
-        <polygon points={outline.map((p) => p.join(',')).join(' ')} className="mask-line" onPointerDown={dragBody} style={{ pointerEvents: 'all', cursor: 'move' }} />
+        <polygon points={outline.map((p) => p.join(',')).join(' ')} className="mask-line" onPointerDown={dragBody} onDoubleClick={addPoint} style={{ pointerEvents: 'all', cursor: 'move' }} />
         {rotPt && <line x1={(outline[0][0] + outline[1][0]) / 2} y1={(outline[0][1] + outline[1][1]) / 2} x2={rotPt[0]} y2={rotPt[1]} className="xf-line" />}
       </svg>
       <div className="xf-handle xf-rot" style={{ left: centre[0], top: centre[1], width: 8, height: 8, margin: '-4px 0 0 -4px', pointerEvents: 'none' }} />
-      {m.shape === 'poly' && outline.map((p, i) => <div key={i} className="xf-handle xf-corner" style={{ left: p[0], top: p[1] }} onPointerDown={(e) => dragPoint(e, i)} title="Drag to reshape" />)}
+      {m.shape === 'poly' && outline.map((p, i) => <div key={i} className="xf-handle xf-corner" style={{ left: p[0], top: p[1] }} onPointerDown={(e) => dragPoint(e, i)} onContextMenu={(e) => removePoint(e, i)} title="Drag to move this point. Right-click to remove it. Double-click the outline to add a point." />)}
       {handles.map((p, i) => <div key={i} className="xf-handle xf-corner" style={{ left: p[0], top: p[1] }} onPointerDown={dragCorner} title="Drag to resize the mask" />)}
       {rotPt && <div className="xf-handle xf-rot" style={{ left: rotPt[0], top: rotPt[1] }} onPointerDown={dragRotate} title="Turn the mask" />}
     </div>

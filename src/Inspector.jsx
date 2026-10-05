@@ -171,6 +171,11 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
           <Icon name="wand" size={13} /> Draw around subject
         </button>
       </div>
+      <div className="mtop btnrow">
+        <button className={'mini wide' + (mode === 'maskpoly' ? ' on' : '')} onClick={() => setMode(mode === 'maskpoly' ? 'mask' : 'maskpoly')} title="Click to place the points of a shape, then drag the points to adjust it">
+          <Icon name="wand" size={13} /> Click points
+        </button>
+      </div>
       {!clip.text && (
         <div className="mtop btnrow">
           <button
@@ -200,6 +205,7 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
         </>
       )}
       {mode === 'maskdraw' && <div className="hint left">Draw a loop around the subject on the preview, then let go.</div>}
+      {mode === 'maskpoly' && <div className="hint left">Click around the subject to place points. Click the first point, double-click or press Enter to finish. Afterwards drag any point to adjust it, double-click the outline to add a point, right-click a point to remove it.</div>}
       {mode === 'maskdrawsmart' && <div className="hint left">Draw a loose loop around the subject you want. The AI works out its exact edges. It looks at this one frame; use the Mask X / Y keyframes to follow it.</div>}
       {mk && (
         <>

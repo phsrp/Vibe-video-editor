@@ -1,1 +1,4 @@
-- Fixed: the time labels along the top of the timeline no longer pile up when you zoom out; they spread out to minutes and hours
+- Mask tracking is much faster: the AI now runs on your graphics card when it can (about 30 times faster in my test), and falls back to the processor otherwise
+- Fixed: tracking could lose the subject and let the mask grow or wander off. It now predicts where the subject is going and rejects wrong results
+- New: Click points tool for masks. Click to place points around a subject, then drag points to adjust, double-click the outline to add one, right-click to remove one
+- Fixed: the progress bar in the tracking popup is now drawn at full height

@@ -380,7 +380,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         <canvas ref={canvasRef} width={cw} height={ch} className="preview-canvas" />
         {mode === 'warp' && <WarpOverlay state={state} dispatch={dispatch} />}
         {mode === 'transform' && <TransformOverlay state={state} dispatch={dispatch} free={freeMode} box={box} />}
-        {(mode === 'mask' || mode === 'maskdraw' || mode === 'maskdrawsmart') && (
+        {(mode === 'mask' || mode === 'maskdraw' || mode === 'maskpoly' || mode === 'maskdrawsmart') && (
           <MaskOverlay
             state={state}
             dispatch={dispatch}

@@ -3,28 +3,54 @@
 import { toUrl } from './state.js'
 import { MAX_POLY, polyCentre } from './masks.js'
 
-let ortPromise = null
-async function getOrt() {
-  if (!ortPromise) {
-    ortPromise = import('onnxruntime-web/wasm').then((ort) => {
+// The AI runs on the graphics card (WebGPU) when this PC has one that works, otherwise on the processor (WebAssembly).
+// window.__smartEngine says which one was used.
+let ortCache = {}
+async function getOrt(kind) {
+  if (!ortCache[kind]) {
+    ortCache[kind] = (kind === 'gpu' ? import('onnxruntime-web/webgpu') : import('onnxruntime-web/wasm')).then((ort) => {
       ort.env.wasm.wasmPaths = new URL('./ort/', document.baseURI).href
-      ort.env.wasm.numThreads = 1
+      ort.env.wasm.numThreads = kind === 'gpu' ? 1 : 1
       return ort
     })
   }
-  return ortPromise
+  return ortCache[kind]
 }
 
 let sessions = null
 async function getSessions(paths) {
   if (sessions) return sessions
-  const ort = await getOrt()
-  const load = async (p) => {
-    const buf = await (await fetch(toUrl(p))).arrayBuffer()
-    return ort.InferenceSession.create(buf, { executionProviders: ['wasm'] })
+  const buffers = {}
+  const buf = async (p) => buffers[p] || (buffers[p] = await (await fetch(toUrl(p))).arrayBuffer())
+  const build = async (kind) => {
+    const ort = await getOrt(kind)
+    const eps = kind === 'gpu' ? ['webgpu'] : ['wasm']
+    const load = async (p) => ort.InferenceSession.create(await buf(p), { executionProviders: eps })
+    return { ort, kind, encoder: await load(paths.encoder), decoder: await load(paths.decoder) }
   }
-  sessions = { ort, encoder: await load(paths.encoder), decoder: await load(paths.decoder) }
+  let made = null
+  if (!window.__smartForceCpu && typeof navigator !== 'undefined' && navigator.gpu) {
+    try {
+      const ad = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' })
+      if (ad) made = await build('gpu')
+    } catch (e) {
+      window.__smartGpuError = String((e && e.message) || e)
+      made = null
+    }
+  }
+  if (!made) made = await build('cpu')
+  window.__smartEngine = made.kind
+  sessions = made
   return sessions
+}
+// 'gpu' or 'cpu': which engine runs the AI on this PC (loads the models if they are not loaded yet)
+export async function engineKind(paths) {
+  return (await getSessions(paths)).kind
+}
+// forget the loaded models (developer self-test: compare the two engines)
+export function resetEngine() {
+  sessions = null
+  cache.embeddings = null
 }
 
 // names of the inputs and outputs of the two models (used by the developer self-test)
@@ -202,6 +228,7 @@ export async function trackSubject({ file, startPts, times, paths, onProgress, i
   const s0 = bboxSize(startPts)
   const out = []
   let prev = startPts
+  let before = null // the middle of the outline one look earlier
   try {
     for (let i = 0; i < times.length; i++) {
       if (isCancelled && isCancelled()) return null
@@ -209,10 +236,28 @@ export async function trackSubject({ file, startPts, times, paths, onProgress, i
       let pts = startPts
       if (i > 0) {
         await seek(times[i])
-        const found = await findSubject({ el: v, w, h, lasso: grow(prev, 1.15), paths, frameKey: 'trk:' + file + ':' + times[i] + ':' + Math.random() })
-        // lost it, or it jumped somewhere impossible: keep the last place
-        if (found && found.length >= 3 && Math.hypot(polyCentre(found)[0] - polyCentre(prev)[0], polyCentre(found)[1] - polyCentre(prev)[1]) < 0.3) pts = found
-        else pts = prev
+        // Look for the subject where it was, with a loop that is only a little bigger (a big loop makes the AI pick up the
+        // background). A result that is much bigger or smaller than before, or far away, is wrong: try a small loop
+        // in the middle of where it was, and if that is wrong too keep the last place.
+        const key = 'trk:' + file + ':' + times[i] + ':' + Math.random()
+        const sPrev = bboxSize(prev)
+        const good = (f) => {
+          if (!f || f.length < 3) return false
+          const k = bboxSize(f) / sPrev
+          const pc = polyCentre(prev)
+          const fc = polyCentre(f)
+          return k > 0.65 && k < 1.5 && Math.hypot(fc[0] - pc[0], fc[1] - pc[1]) < sPrev * 1.2
+        }
+        // where it should be now: the last outline moved on by the speed it had between the last two looks
+        const pc = polyCentre(prev)
+        const vx = before ? pc[0] - before[0] : 0
+        const vy = before ? pc[1] - before[1] : 0
+        const moved = prev.map((p) => [p[0] + vx, p[1] + vy])
+        let found = await findSubject({ el: v, w, h, lasso: grow(moved, 1.04), paths, frameKey: key })
+        if (!good(found)) found = await findSubject({ el: v, w, h, lasso: grow(prev, 1.04), paths, frameKey: key })
+        if (!good(found)) found = await findSubject({ el: v, w, h, lasso: grow(moved, 0.5), paths, frameKey: key })
+        before = pc
+        pts = good(found) ? found : prev
       }
       prev = pts
       const c = polyCentre(pts)
