@@ -146,6 +146,7 @@ button.mini.on { background: color-mix(in srgb, var(--love) 25%, var(--panel2));
 /* keyframe markers on a clip */
 .kf { position: absolute; bottom: 5px; width: 11px; height: 11px; margin-left: -5px; background: var(--accent2); border: 1px solid var(--bg); transform: rotate(45deg); z-index: 4; cursor: ew-resize; }
 .kf:hover { background: var(--text); }
+.tl-row.drop-here { outline: 2px dashed var(--accent2); outline-offset: -2px; background: color-mix(in srgb, var(--accent2) 10%, transparent); }
 /* the mask on a clip: a bar you can shorten, lengthen, move or remove */
 .mask-bar { position: absolute; top: 21px; height: 15px; z-index: 3; display: flex; align-items: center; justify-content: center; border-radius: 4px; background: color-mix(in srgb, var(--iris, #c4a7e7) 75%, transparent); border: 1px solid var(--iris, #c4a7e7); color: #fff; font-size: 10px; cursor: grab; overflow: hidden; }
 .mask-bar span { pointer-events: none; text-shadow: 0 1px 2px #000; }

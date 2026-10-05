@@ -821,8 +821,69 @@ export function reducer(state, a) {
       return {
         ...state,
         overlayClips: state.overlayClips.map((c) => (to.has(c.id) ? { ...c, start: Math.max(0, to.get(c.id).start), trackId: to.get(c.id).trackId || c.trackId } : c)),
-        audioClips: state.audioClips.map((c) => (to.has(c.id) ? { ...c, start: Math.max(0, to.get(c.id).start) } : c)),
+        audioClips: state.audioClips.map((c) => (to.has(c.id) ? { ...c, start: Math.max(0, to.get(c.id).start), trackId: to.get(c.id).trackId || c.trackId } : c)),
       }
+    }
+    // A clip of the main video track goes onto an overlay track (a.trackId) at time a.start. Its own sound comes along
+    // as detached audio clips grouped with it, and the gap it leaves in the main track closes.
+    case 'clipToOverlay': {
+      const before = layout(state.clips)
+      const c = before.find((x) => x.id === a.id)
+      const m = c && state.media.find((x) => x.id === c.mediaId)
+      if (!c || !m || !state.videoTracks.some((t) => t.id === a.trackId)) return state
+      const start = Math.max(0, a.start || 0)
+      const streams = (m.audioStreams || []).map((_, n) => n).filter((n) => hasAttached(c, m, n))
+      const gid = c.groupId || (streams.length ? uid() : undefined)
+      const { dur, ov, transition, noAudio, ...keep } = c
+      const clip = { ...keep, trackId: a.trackId, start, groupId: gid }
+      const clips = state.clips.filter((x) => x.id !== c.id)
+      const tracks = [...state.audioTracks]
+      const added = []
+      for (const n of streams) {
+        const tid = 'ug' + n
+        if (!tracks.some((t) => t.id === tid)) tracks.push({ id: tid, name: `Video audio ${n + 1} (detached)`, kind: 'free', volume: 1, mute: false })
+        added.push({ id: uid(), mediaId: m.id, stream: n, trackId: tid, in: c.in, out: c.out, start, origin: c.id, groupId: gid })
+      }
+      // audio grouped with the clips that moved up or down the main track follows them
+      const after = layout(clips)
+      const delta = new Map()
+      for (const x of after) {
+        const b = before.find((y) => y.id === x.id)
+        if (x.groupId && b && !delta.has(x.groupId)) delta.set(x.groupId, x.start - b.start)
+      }
+      const shifted = state.audioClips.map((x) => {
+        if (!x.groupId) return x
+        if (x.groupId === c.groupId) return { ...x, start: Math.max(0, x.start + start - c.start) }
+        return delta.has(x.groupId) ? { ...x, start: Math.max(0, x.start + delta.get(x.groupId)) } : x
+      })
+      return { ...commit(state, { clips, overlayClips: [...state.overlayClips, clip], audioClips: [...shifted, ...added] }), audioTracks: tracks, selection: [clip.id] }
+    }
+    // An overlay clip goes onto the main video track at index a.toIndex. Its sound goes back to being attached.
+    case 'overlayToMain': {
+      const c = state.overlayClips.find((x) => x.id === a.id)
+      const m = c && !c.text && state.media.find((x) => x.id === c.mediaId)
+      if (!c || !m) return state
+      const before = layout(state.clips)
+      const { trackId, start, ...keep } = c
+      const own = state.audioClips.filter((x) => x.origin === c.id)
+      const gone = new Set(own.map((x) => x.id))
+      // the group stays only if something else belongs to it
+      const shares = !!c.groupId && [...state.clips, ...state.overlayClips.filter((x) => x.id !== c.id), ...state.audioClips.filter((x) => !gone.has(x.id))].some((x) => x.groupId === c.groupId)
+      const clip = { ...keep, transition: null, noAudio: [], groupId: shares ? c.groupId : undefined }
+      const idx = clamp(a.toIndex, 0, state.clips.length)
+      const clips = [...state.clips.slice(0, idx), clip, ...state.clips.slice(idx)]
+      const after = layout(clips)
+      const delta = new Map()
+      for (const x of after) {
+        if (!x.groupId || delta.has(x.groupId)) continue
+        const b = x.id === c.id ? { start: c.start } : before.find((y) => y.id === x.id)
+        if (b) delta.set(x.groupId, x.start - b.start)
+      }
+      const audioClips = state.audioClips
+        .filter((x) => !gone.has(x.id))
+        .map((x) => (x.groupId && delta.has(x.groupId) ? { ...x, start: Math.max(0, x.start + delta.get(x.groupId)) } : x))
+      const audioTracks = state.audioTracks.filter((t) => !t.id.startsWith('ug') || audioClips.some((x) => x.trackId === t.id))
+      return { ...commit(state, { clips, overlayClips: state.overlayClips.filter((x) => x.id !== c.id), audioClips }), audioTracks, selection: [c.id] }
     }
     // live trim of an overlay clip; value = new absolute in/out (source seconds)
     case 'trimOverlay': {

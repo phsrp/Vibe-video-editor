@@ -66,6 +66,7 @@
 - **Easing:** choose how the change between two keyframes feels, from seven ready-made styles or your own **Custom curve** (see [Easing](#easing) below).
 - **Funny warp:** drag the four corners of the picture anywhere to bend it (a corner pin), also with keyframes and easing.
 - **Overlay video tracks:** **Add track** asks for a **Video** or **Audio** track. A video track is a layer that sits on top of the one below it, and its clips can start at any time (picture-in-picture, stickers, reaction videos). A video's own sound comes along as grouped audio.
+- **Drag clips between tracks:** drag a video clip up or down onto another video track and it moves there (the track you are over is outlined). A clip from the main video track can be dragged up onto an overlay track, and an overlay clip can be dragged down onto the main track, where it goes back into the sequence. Audio clips can be dragged onto other audio tracks too. A video's sound travels with it.
 - **Rearrange and rename tracks:** drag any track by its label to move it up or down (higher video tracks are drawn on top, and you can pull audio tracks up next to the video). Double-click a track's name to rename it.
 - **Waveforms:** audio clips show their sound as a sharp waveform (drawn like DaVinci Resolve's), so you can see where speech or a beat starts and stops.
 - **Hide panels:** the Media, Library and Inspector panels can be folded away to give the preview more room.

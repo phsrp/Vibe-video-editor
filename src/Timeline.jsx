@@ -137,6 +137,16 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
     }
     return i
   }
+  const [dropRow, setDropRow] = useState(null) // the row a dragged clip would land on (highlighted)
+  // the track under a height on screen: rowUnder(y, 'v:') = an overlay video track id, 'a:' = an audio track id
+  const rowUnder = (y, prefix) => {
+    for (const k of Object.keys(rowEls.current)) {
+      if (!k.startsWith(prefix)) continue
+      const r = rowEls.current[k].getBoundingClientRect()
+      if (y >= r.top && y < r.bottom) return k.slice(prefix.length)
+    }
+    return null
+  }
   const locked = (k) => (state.lockedRows || []).includes(k)
   const hiddenRow = (k) => (state.hiddenRows || []).includes(k)
 
@@ -312,18 +322,25 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
     const x0 = e.clientX
     let moved = false
     const targetFor = (dx) => indexAtX((c.start + c.dur / 2) * zoom + dx, ids)
+    // one clip dragged up onto an overlay track moves to that track
+    let over = null
     const move = (ev) => {
       const dx = ev.clientX - x0
       if (!moved && Math.abs(dx) < 4) return
       moved = true
-      setDrag({ ids, dx, target: targetFor(dx) })
+      const tr = ids.size === 1 ? rowUnder(ev.clientY, 'v:') : null
+      over = tr && !locked('v:' + tr) ? tr : null
+      setDropRow(over ? 'v:' + over : null)
+      setDrag({ ids, dx, target: over ? null : targetFor(dx) })
     }
     const up = (ev) => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
-      if (moved) dispatch({ type: 'moveClips', ids: [...ids], toIndex: targetFor(ev.clientX - x0) })
+      if (moved && over) dispatch({ type: 'clipToOverlay', id: c.id, trackId: over, start: Math.max(0, c.start + (ev.clientX - x0) / zoom) })
+      else if (moved) dispatch({ type: 'moveClips', ids: [...ids], toIndex: targetFor(ev.clientX - x0) })
       else if (wasSelected && !mod) dispatch({ type: 'select', id: c.id })
       setDrag(null)
+      setDropRow(null)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -471,7 +488,9 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
       // keep the group together even if the earliest clip hits time 0
       const minStart = Math.min(...bases.map((b) => b.start))
       d = Math.max(d, -minStart)
-      dispatch({ type: 'moveAudioBatch', moves: bases.map((b) => ({ id: b.id, start: b.start + d })) })
+      // the dragged clip can change to another audio track
+      const tr = rowUnder(ev.clientY, 'a:')
+      dispatch({ type: 'moveItems', moves: bases.map((b) => ({ id: b.id, start: b.start + d, trackId: b.id === a.id && tr && !locked('a:' + tr) ? tr : undefined })) })
     }
     const up = () => {
       window.removeEventListener('pointermove', move)
@@ -523,6 +542,8 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
     const skip = new Set(bases.map((b) => b.id))
     const x0 = e.clientX
     let started = false
+    let overMain = false
+    let lastX = x0
     const trackUnder = (y) => {
       for (const k of keys) {
         if (!k.startsWith('v:')) continue
@@ -544,12 +565,19 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
       const minStart = Math.min(...bases.map((b) => b.start))
       d = Math.max(d, -minStart)
       const tr = trackUnder(ev.clientY)
+      // one video clip dragged down onto the main track goes there
+      const mr = rowEls.current.main && rowEls.current.main.getBoundingClientRect()
+      overMain = !!(mr && !c.text && bases.filter((b) => oclips.some((x) => x.id === b.id)).length === 1 && !locked('main') && ev.clientY >= mr.top && ev.clientY < mr.bottom)
+      lastX = ev.clientX
+      setDropRow(overMain ? 'main' : null)
       dispatch({ type: 'moveItems', moves: bases.map((b) => ({ id: b.id, start: b.start + d, trackId: b.id === c.id ? tr || b.trackId : undefined })) })
     }
     const up = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       setSnapLine(null)
+      setDropRow(null)
+      if (started && overMain) dispatch({ type: 'overlayToMain', id: c.id, toIndex: indexAtX((c.start + c.dur / 2) * zoom + (lastX - x0), new Set()) })
       if (!started && wasSelected && !mod) dispatch({ type: 'select', id: c.id })
     }
     window.addEventListener('pointermove', move)
@@ -694,7 +722,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
   }
 
   const renderMain = (key) => (
-    <div className={'tl-row' + rowClass(key)} key={key} ref={rowRef(key)} style={{ height: H_VIDEO }}>
+    <div className={'tl-row' + rowClass(key) + (dropRow === key ? ' drop-here' : '')} key={key} ref={rowRef(key)} style={{ height: H_VIDEO }}>
       <RowLabel name={state.mainName} onRename={(name) => dispatch({ type: 'renameRow', key, name })} onGrip={(e) => startRowDrag(e, key)} {...rowFlags(key)} />
       <div className="lane" onDragOver={onVideoDragOver} onDragLeave={() => setDropIdx(null)} onDrop={onVideoDrop}>
         <div className="lane-inner" style={{ left: TRACK_PAD }}>
@@ -748,7 +776,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
     const tr = state.videoTracks.find((x) => x.id === key.slice(2))
     if (!tr) return null
     return (
-      <div className={'tl-row' + rowClass(key)} key={key} ref={rowRef(key)} style={{ height: H_VIDEO }}>
+      <div className={'tl-row' + rowClass(key) + (dropRow === key ? ' drop-here' : '')} key={key} ref={rowRef(key)} style={{ height: H_VIDEO }}>
         <RowLabel
           name={tr.name}
           onRename={(name) => dispatch({ type: 'renameRow', key, name })}
