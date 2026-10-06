@@ -58,6 +58,11 @@ export function buildPlan(state, s) {
   if (!mainHidden) lay.forEach((c, i) => {
     const next = lay[i + 1]
     const nextOv = next ? next.ov : 0
+    // empty time before this clip (a gap the user left): black, with overlays on top
+    if (c.gap > 0) {
+      const g0 = i === 0 ? 0 : lay[i - 1].start + lay[i - 1].dur
+      if (c.start - g0 > 1e-6) raw.push({ kind: 'none', t0: g0, t1: c.start })
+    }
     if (c.ov > 0) raw.push({ kind: 'trans', t0: c.start, t1: c.start + c.ov, a: lay[i - 1], b: c, name: c.transition.name })
     const t0 = c.start + c.ov
     const t1 = c.start + c.dur - nextOv

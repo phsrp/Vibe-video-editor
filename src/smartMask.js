@@ -1,84 +1,34 @@
-// Smart mask: draw a loop around a subject and an AI model (MobileSAM, run on your own PC by onnxruntime-web)
-// finds its exact outline. The model files are downloaded once from Hugging Face (see electron/main.js, 'models:*').
+// Smart select and mask tracking with SAM 2 (Meta's open Segment Anything 2 model, see sam2.js). Draw a loop around a
+// subject and the AI finds its outline; tracking follows that outline through the video. It needs a graphics card:
+// the model files are downloaded once from Hugging Face (see electron/main.js, 'models:*').
 import { toUrl } from './state.js'
-import { MAX_POLY, polyCentre } from './masks.js'
+import { MAX_POLY } from './masks.js'
 
-// The AI runs on the graphics card (WebGPU) when this PC has one that works, otherwise on the processor (WebAssembly).
-// window.__smartEngine says which one was used.
-let ortCache = {}
-async function getOrt(kind) {
-  if (!ortCache[kind]) {
-    ortCache[kind] = (kind === 'gpu' ? import('onnxruntime-web/webgpu') : import('onnxruntime-web/wasm')).then((ort) => {
-      ort.env.wasm.wasmPaths = new URL('./ort/', document.baseURI).href
-      ort.env.wasm.numThreads = kind === 'gpu' ? 1 : 1
-      return ort
-    })
+// What graphics card does this computer have? ok = a real one is usable (WebGPU); weak = probably too slow for comfort
+// (basic integrated graphics or a software stand-in); name = what the computer reports.
+let gpuP = null
+export function gpuInfo() {
+  if (typeof window !== 'undefined' && window.__fakeGpu) return Promise.resolve(window.__fakeGpu) // developer self-test
+  if (!gpuP) {
+    gpuP = (async () => {
+      try {
+        if (typeof navigator === 'undefined' || !navigator.gpu) return { ok: false, weak: false, name: '' }
+        const a = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' })
+        if (!a) return { ok: false, weak: false, name: '' }
+        const i = a.info || {}
+        const name = [i.vendor, i.architecture, i.device, i.description].filter(Boolean).join(' ')
+        const fallback = !!a.isFallbackAdapter
+        return { ok: !fallback, weak: fallback || /UHD|HD Graphics|SwiftShader|Basic Render|llvmpipe|Microsoft/i.test(name), name }
+      } catch (e) {
+        return { ok: false, weak: false, name: '' }
+      }
+    })()
   }
-  return ortCache[kind]
+  return gpuP
 }
+export const hasGpu = async () => (await gpuInfo()).ok
 
-let sessions = null
-async function getSessions(paths) {
-  if (sessions) return sessions
-  const buffers = {}
-  const buf = async (p) => buffers[p] || (buffers[p] = await (await fetch(toUrl(p))).arrayBuffer())
-  const build = async (kind) => {
-    const ort = await getOrt(kind)
-    const eps = kind === 'gpu' ? ['webgpu'] : ['wasm']
-    const load = async (p) => ort.InferenceSession.create(await buf(p), { executionProviders: eps })
-    return { ort, kind, encoder: await load(paths.encoder), decoder: await load(paths.decoder) }
-  }
-  let made = null
-  if (!window.__smartForceCpu && typeof navigator !== 'undefined' && navigator.gpu) {
-    try {
-      const ad = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' })
-      if (ad) made = await build('gpu')
-    } catch (e) {
-      window.__smartGpuError = String((e && e.message) || e)
-      made = null
-    }
-  }
-  if (!made) made = await build('cpu')
-  window.__smartEngine = made.kind
-  sessions = made
-  return sessions
-}
-// 'gpu' or 'cpu': which engine runs the AI on this PC (loads the models if they are not loaded yet)
-export async function engineKind(paths) {
-  return (await getSessions(paths)).kind
-}
-// forget the loaded models (developer self-test: compare the two engines)
-export function resetEngine() {
-  sessions = null
-  cache.embeddings = null
-}
 
-// names of the inputs and outputs of the two models (used by the developer self-test)
-export async function describeModels(paths) {
-  const s = await getSessions(paths)
-  return { encoder: { in: s.encoder.inputNames, out: s.encoder.outputNames }, decoder: { in: s.decoder.inputNames, out: s.decoder.outputNames } }
-}
-
-// The picture as the model wants it: longest side 1024, as raw 0..255 values in height x width x 3 order (the model
-// subtracts the mean and pads to a square itself).
-function prepare(el, w, h) {
-  const scale = 1024 / Math.max(w, h)
-  const nw = Math.round(w * scale)
-  const nh = Math.round(h * scale)
-  const cv = document.createElement('canvas')
-  cv.width = nw
-  cv.height = nh
-  const g = cv.getContext('2d', { willReadFrequently: true })
-  g.drawImage(el, 0, 0, nw, nh)
-  const px = g.getImageData(0, 0, nw, nh).data
-  const data = new Float32Array(nw * nh * 3)
-  for (let i = 0, n = nw * nh; i < n; i++) {
-    data[i * 3] = px[i * 4]
-    data[i * 3 + 1] = px[i * 4 + 1]
-    data[i * 3 + 2] = px[i * 4 + 2]
-  }
-  return { data, scale, nw, nh }
-}
 // polygon helpers (points are [x, y] in 0..1 picture coordinates)
 const inside = (p, poly) => {
   let c = false
@@ -189,21 +139,109 @@ function simplify(pts, tol) {
   return pts.filter((_, i) => keep[i])
 }
 
-// the outline made a little bigger around its middle (used as the "loop" that tells the AI where to look next)
-const grow = (pts, k) => {
-  const c = polyCentre(pts)
-  return pts.map((p) => [c[0] + (p[0] - c[0]) * k, c[1] + (p[1] - c[1]) * k])
-}
-const bboxSize = (pts) => {
-  const xs = pts.map((p) => p[0])
-  const ys = pts.map((p) => p[1])
-  return Math.sqrt(Math.max(1e-6, (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))))
+
+// the 4 corners that best describe an outline (for plates, screens, signs): the convex hull with its least important
+// corners removed until 4 are left
+export function fitQuad(pts) {
+  const P = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+  const half = (list) => {
+    const h = []
+    for (const p of list) {
+      while (h.length >= 2 && cross(h[h.length - 2], h[h.length - 1], p) <= 0) h.pop()
+      h.push(p)
+    }
+    h.pop()
+    return h
+  }
+  let hull = [...half(P), ...half([...P].reverse())]
+  while (hull.length > 4) {
+    let best = 0
+    let bestA = Infinity
+    for (let i = 0; i < hull.length; i++) {
+      const a = hull[(i + hull.length - 1) % hull.length]
+      const b = hull[i]
+      const c = hull[(i + 1) % hull.length]
+      const area = Math.abs(cross(a, b, c)) / 2
+      if (area < bestA) {
+        bestA = area
+        best = i
+      }
+    }
+    hull = hull.filter((_, i) => i !== best)
+  }
+  return hull.length >= 3 ? hull : pts
 }
 
-// Follows a subject through a video. file = the video, startPts = its outline at second t0 of the file, the AI looks
-// again at each second in `times` (in the order they should be visited, the first is t0). Returns, for each time,
-// how far the outline's middle moved and how much its size changed since the start: [{t, mx, my, ms}] (percent).
-export async function trackSubject({ file, startPts, times, paths, onProgress, isCancelled }) {
+// ---- SAM 2: smart select and outline tracking ----
+let sam2P = null
+function getSam2(paths) {
+  if (!sam2P) {
+    sam2P = import('./sam2.js').then((m) => m.loadSam2(paths).then((sam) => ({ sam, m }))).catch((e) => {
+      sam2P = null
+      throw e
+    })
+  }
+  return sam2P
+}
+
+// the object's outline from the model's 256 x 256 logits: smoothed up to 512 x 512, traced, then fewer points
+export function maskToPolygon(logits, size = 256) {
+  const n = size * 2
+  const g = new Uint8Array(n * n)
+  for (let y = 0; y < n; y++) {
+    const fy = Math.max(0, Math.min(size - 1.001, (y + 0.5) / 2 - 0.5))
+    const y0 = Math.floor(fy)
+    const ay = fy - y0
+    for (let x = 0; x < n; x++) {
+      const fx = Math.max(0, Math.min(size - 1.001, (x + 0.5) / 2 - 0.5))
+      const x0 = Math.floor(fx)
+      const ax = fx - x0
+      const v = logits[y0 * size + x0] * (1 - ax) * (1 - ay) + logits[y0 * size + x0 + 1] * ax * (1 - ay) + logits[(y0 + 1) * size + x0] * (1 - ax) * ay + logits[(y0 + 1) * size + x0 + 1] * ax * ay
+      g[y * n + x] = v > 0 ? 1 : 0
+    }
+  }
+  const trace = outline(g, n, n)
+  if (trace.length < 6) return []
+  const norm = trace.map(([x, y]) => [(x + 0.5) / n, (y + 0.5) / n])
+  let tol = 0.0015
+  let simp = simplify(norm, tol)
+  while (simp.length > MAX_POLY && tol < 0.1) {
+    tol *= 1.25
+    simp = simplify(norm, tol)
+  }
+  return simp.slice(0, MAX_POLY)
+}
+
+// box + a few inside points from a loop (0..1), as the model's prompt
+function promptFromLoop(lasso) {
+  const xs = lasso.map((p) => p[0])
+  const ys = lasso.map((p) => p[1])
+  const x0 = Math.min(...xs)
+  const x1 = Math.max(...xs)
+  const y0 = Math.min(...ys)
+  const y1 = Math.max(...ys)
+  const pos = []
+  for (const [a, b] of [[0.5, 0.5], [0.3, 0.5], [0.7, 0.5], [0.5, 0.3], [0.5, 0.7]]) {
+    const p = [x0 + (x1 - x0) * a, y0 + (y1 - y0) * b]
+    if (inside(p, lasso)) pos.push(p)
+  }
+  if (!pos.length) pos.push([(x0 + x1) / 2, (y0 + y1) / 2])
+  return [{ x: x0, y: y0, label: 2 }, { x: x1, y: y1, label: 3 }, ...pos.slice(0, 4).map((p) => ({ x: p[0], y: p[1], label: 1 }))]
+}
+
+// Smart select with SAM 2: the outline of the subject inside a loop (0..1 picture coordinates), or null.
+export async function findSubject({ el, w, h, lasso, paths }) {
+  const { sam } = await getSam2(paths)
+  const mask = await sam.seed(el, w, h, promptFromLoop(lasso))
+  const poly = maskToPolygon(mask.logits)
+  return poly.length >= 3 ? poly : null
+}
+
+// Follows a subject's outline through a video with SAM 2. startPts = its outline at second times[0]; times = the
+// seconds to look at in order. Returns [{t, pts}] ([] = the subject is not in the picture), or null if cancelled.
+export async function trackOutline({ file, startPts, times, paths, quad, onProgress, isCancelled }) {
+  const { sam, m } = await getSam2(paths)
   const v = document.createElement('video')
   v.muted = true
   v.preload = 'auto'
@@ -224,46 +262,22 @@ export async function trackSubject({ file, startPts, times, paths, onProgress, i
       v.currentTime = t
       setTimeout(done, 4000)
     })
-  const c0 = polyCentre(startPts)
-  const s0 = bboxSize(startPts)
-  const out = []
-  let prev = startPts
-  let before = null // the middle of the outline one look earlier
+  const finish = (pts) => (quad && pts.length >= 4 ? fitQuad(pts) : pts)
+  const out = [{ t: times[0], pts: finish(startPts) }]
   try {
-    for (let i = 0; i < times.length; i++) {
+    await seek(times[0])
+    // the first picture is remembered as exactly the outline the user has
+    await sam.seed(v, w, h, promptFromLoop(startPts), m.polygonLogits(startPts))
+    for (let i = 1; i < times.length; i++) {
       if (isCancelled && isCancelled()) return null
       onProgress && onProgress(i, times.length)
-      let pts = startPts
-      if (i > 0) {
-        await seek(times[i])
-        // Look for the subject where it was, with a loop that is only a little bigger (a big loop makes the AI pick up the
-        // background). A result that is much bigger or smaller than before, or far away, is wrong: try a small loop
-        // in the middle of where it was, and if that is wrong too keep the last place.
-        const key = 'trk:' + file + ':' + times[i] + ':' + Math.random()
-        const sPrev = bboxSize(prev)
-        const good = (f) => {
-          if (!f || f.length < 3) return false
-          const k = bboxSize(f) / sPrev
-          const pc = polyCentre(prev)
-          const fc = polyCentre(f)
-          return k > 0.65 && k < 1.5 && Math.hypot(fc[0] - pc[0], fc[1] - pc[1]) < sPrev * 1.2
-        }
-        // where it should be now: the last outline moved on by the speed it had between the last two looks
-        const pc = polyCentre(prev)
-        const vx = before ? pc[0] - before[0] : 0
-        const vy = before ? pc[1] - before[1] : 0
-        const moved = prev.map((p) => [p[0] + vx, p[1] + vy])
-        let found = await findSubject({ el: v, w, h, lasso: grow(moved, 1.04), paths, frameKey: key })
-        if (!good(found)) found = await findSubject({ el: v, w, h, lasso: grow(prev, 1.04), paths, frameKey: key })
-        if (!good(found)) found = await findSubject({ el: v, w, h, lasso: grow(moved, 0.5), paths, frameKey: key })
-        before = pc
-        pts = good(found) ? found : prev
-      }
-      prev = pts
-      const c = polyCentre(pts)
-      out.push({ t: times[i], mx: (c[0] - c0[0]) * 100, my: (c[1] - c0[1]) * 100, ms: Math.min(400, Math.max(10, (bboxSize(pts) / s0) * 100)) })
+      await seek(times[i])
+      const mask = await sam.track(v, w, h, i, times.length)
+      const poly = mask.score > 0 ? maskToPolygon(mask.logits) : []
+      out.push({ t: times[i], pts: finish(poly) })
     }
   } finally {
+    sam.reset()
     v.removeAttribute('src')
     v.load()
   }
@@ -271,76 +285,3 @@ export async function trackSubject({ file, startPts, times, paths, onProgress, i
   return out
 }
 
-const cache = { el: null, key: '', embeddings: null, scale: 1 }
-
-// Finds the subject inside a loop drawn around it. el = the picture (video frame or image) of size w x h,
-// lasso = the loop as [x, y] points in 0..1 picture coordinates, paths = the two model files.
-// Returns the outline as up to MAX_POLY points in 0..1 picture coordinates, or null when nothing was found.
-export async function findSubject({ el, w, h, lasso, paths, frameKey }) {
-  const { ort, encoder, decoder } = await getSessions(paths)
-  const key = frameKey || ''
-  if (!cache.embeddings || cache.el !== el || cache.key !== key) {
-    const { data, scale, nw, nh } = prepare(el, w, h)
-    const out = await encoder.run({ input_image: new ort.Tensor('float32', data, [nh, nw, 3]) })
-    cache.embeddings = out.image_embeddings
-    cache.scale = scale
-    cache.el = el
-    cache.key = key
-  }
-  const scale = cache.scale
-  // the loop gives a box and a few points inside it
-  const xs = lasso.map((p) => p[0])
-  const ys = lasso.map((p) => p[1])
-  const x0 = Math.min(...xs)
-  const x1 = Math.max(...xs)
-  const y0 = Math.min(...ys)
-  const y1 = Math.max(...ys)
-  const pos = []
-  const cxm = (x0 + x1) / 2
-  const cym = (y0 + y1) / 2
-  const grid = [[0.5, 0.5], [0.3, 0.5], [0.7, 0.5], [0.5, 0.3], [0.5, 0.7], [0.5, 0.15], [0.5, 0.85]]
-  for (const [a, b] of grid) {
-    const p = [x0 + (x1 - x0) * a, y0 + (y1 - y0) * b]
-    if (inside(p, lasso)) pos.push(p)
-  }
-  if (!pos.length) pos.push([cxm, cym])
-  const pts = [[x0, y0], [x1, y1], ...pos.slice(0, 5)]
-  const labels = [2, 3, ...pos.slice(0, 5).map(() => 1)]
-  const coords = new Float32Array(pts.length * 2)
-  pts.forEach((p, i) => {
-    coords[i * 2] = p[0] * w * scale
-    coords[i * 2 + 1] = p[1] * h * scale
-  })
-  const res = await decoder.run({
-    image_embeddings: cache.embeddings,
-    point_coords: new ort.Tensor('float32', coords, [1, pts.length, 2]),
-    point_labels: new ort.Tensor('float32', Float32Array.from(labels), [1, labels.length]),
-    mask_input: new ort.Tensor('float32', new Float32Array(256 * 256), [1, 1, 256, 256]),
-    has_mask_input: new ort.Tensor('float32', new Float32Array([0]), [1]),
-    orig_im_size: new ort.Tensor('float32', new Float32Array([h, w]), [2]),
-  })
-  const m = res.masks.data // logits, h x w
-  // a small grid of the mask (the longest side about 320 cells) is enough for an outline
-  const gs = 320 / Math.max(w, h)
-  const gw = Math.max(8, Math.round(w * gs))
-  const gh = Math.max(8, Math.round(h * gs))
-  const g = new Uint8Array(gw * gh)
-  for (let y = 0; y < gh; y++) {
-    for (let x = 0; x < gw; x++) {
-      const sx = Math.min(w - 1, Math.floor(((x + 0.5) / gw) * w))
-      const sy = Math.min(h - 1, Math.floor(((y + 0.5) / gh) * h))
-      g[y * gw + x] = m[sy * w + sx] > 0 ? 1 : 0
-    }
-  }
-  const trace = outline(g, gw, gh)
-  if (trace.length < 6) return null
-  // the cell centres, as 0..1 picture coordinates, then fewer points
-  let norm = trace.map(([x, y]) => [(x + 0.5) / gw, (y + 0.5) / gh])
-  let tol = 0.002
-  let simp = simplify(norm, tol)
-  while (simp.length > MAX_POLY && tol < 0.1) {
-    tol *= 1.3
-    simp = simplify(norm, tol)
-  }
-  return simp.slice(0, MAX_POLY)
-}

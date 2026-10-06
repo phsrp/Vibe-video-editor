@@ -67,17 +67,31 @@ export function layout(clips) {
   let end = 0
   clips.forEach((c, i) => {
     const dur = (c.out - c.in) / speedOf(c)
+    // c.gap = seconds of empty (black) time before this clip; a clip after a gap has no transition into it
+    const gap = c.gap > 0.0005 ? c.gap : 0
     let ov = 0
-    if (i > 0 && c.transition && c.transition.name) {
+    if (i > 0 && !gap && c.transition && c.transition.name) {
       const prev = out[i - 1]
       ov = Math.min(c.transition.duration, prev.dur - prev.ov, dur)
       if (ov < 0.05) ov = 0
     }
-    const start = i === 0 ? 0 : end - ov
-    out.push({ ...c, dur, ov, start })
+    const start = i === 0 ? gap : end + gap - ov
+    out.push({ ...c, dur, ov, start, gap })
     end = start + dur
   })
   return out
+}
+
+// Audio that is grouped with main-track clips follows them when the layout changes (a gap opened or closed, clips
+// reordered): every group moves by what its first main-track clip moved.
+function shiftGroupAudio(audioClips, before, after) {
+  const delta = new Map()
+  for (const x of after) {
+    const b = before.find((y) => y.id === x.id)
+    if (x.groupId && b && !delta.has(x.groupId)) delta.set(x.groupId, x.start - b.start)
+  }
+  if (![...delta.values()].some((d) => Math.abs(d) > 1e-9)) return audioClips
+  return audioClips.map((x) => (x.groupId && delta.has(x.groupId) ? { ...x, start: Math.max(0, x.start + delta.get(x.groupId)) } : x))
 }
 
 export function totalDuration(clips) {
@@ -363,6 +377,31 @@ export function reducer(state, a) {
       return commit(state, { clips, audioClips })
     }
 
+    // Like moveClips, but the first moved clip also gets `a.gap` seconds of empty time in front of it (0 = none), and
+    // the sound grouped with any clip follows that clip wherever it ends up. Used when a clip is dragged on the main track.
+    case 'moveMainTo': {
+      const ids = new Set(a.ids)
+      const moving = state.clips.filter((c) => ids.has(c.id))
+      if (!moving.length) return state
+      const rest = state.clips.filter((c) => !ids.has(c.id))
+      const idx = clamp(a.toIndex, 0, rest.length)
+      const gap = Math.max(0, a.gap || 0)
+      const placed = moving.map((c, i) => ({ ...c, gap: i === 0 ? gap : 0 }))
+      const clips = [...rest.slice(0, idx), ...placed, ...rest.slice(idx)]
+      const before = layout(state.clips)
+      const after = layout(clips)
+      if (clips.every((x, i) => x.id === state.clips[i].id && (x.gap || 0) === (state.clips[i].gap || 0))) return state
+      const audioClips = shiftGroupAudio(state.audioClips, before, after)
+      return commit(state, { clips, audioClips })
+    }
+    // remove the empty time in front of a main-track clip
+    case 'closeGap': {
+      const clips = state.clips.map((c) => (c.id === a.id && c.gap ? { ...c, gap: 0 } : c))
+      if (clips.every((c, i) => c === state.clips[i])) return state
+      const audioClips = shiftGroupAudio(state.audioClips, layout(state.clips), layout(clips))
+      return { ...commit(state, { clips, audioClips }), selection: [] }
+    }
+
     // Call once at the start of a drag so the whole drag is a single undo step.
     case 'checkpoint':
       return { ...state, past: hist(state), future: [] }
@@ -408,7 +447,7 @@ export function reducer(state, a) {
       if (!c) return state
       const sr = splitRanges(c, a.t)
       const left = newClip(c, sr.first)
-      const right = newClip(c, { ...sr.second, id: uid(), transition: null })
+      const right = newClip(c, { ...sr.second, id: uid(), transition: null, gap: 0 })
       const clips = state.clips.flatMap((x) => (x.id === c.id ? [left, right] : [x]))
       return { ...commit(state, { clips }), selection: [right.id] }
     }
@@ -439,7 +478,7 @@ export function reducer(state, a) {
         } else {
           const sr = splitRanges(c, a.t)
           const left = newClip(c, sr.first)
-          const right = newClip(c, { ...sr.second, id: uid(), transition: null })
+          const right = newClip(c, { ...sr.second, id: uid(), transition: null, gap: 0 })
           clips = [...state.clips.slice(0, idx), left, fc, right, ...state.clips.slice(idx + 1)]
         }
       }
@@ -450,6 +489,13 @@ export function reducer(state, a) {
     case 'deleteSelection': {
       const todo = state.selection.filter((id) => !isLocked(state, id)) // locked rows cannot be edited
       if (!todo.length) return state
+      // a selected gap ('gap:<clip id>') is closed
+      const gaps = todo.filter((id) => id.startsWith('gap:')).map((id) => id.slice(4))
+      if (gaps.length && gaps.length === todo.length) {
+        let st = state
+        for (const g of gaps) st = reducer(st, { type: 'closeGap', id: g })
+        return st === state ? { ...state, selection: [] } : st
+      }
       const sel = new Set(todo)
       const gone = new Map() // clipId -> streams deleted
       for (const id of todo) {
@@ -946,14 +992,14 @@ export function reducer(state, a) {
       }
       return a.live ? { ...state, ...mapClips(state, f) } : commit(state, mapClips(state, f))
     }
-    // result of tracking: the mask lasts from..to (source seconds) and follows the subject with Mask X / Y / size keyframes.
-    // keys = [{t, mx, my, ms}]
-    case 'setMaskTrack': {
+    // result of tracking: the mask lasts from..to (source seconds) and has its own outline for every moment.
+    // frames = [{t, pts}] sorted by t
+    case 'setMaskOutline': {
       const f = (c) => {
         if (c.id !== a.id || !c.mask) return c
         const anim = { ...(c.anim || {}) }
-        for (const k of ['mx', 'my', 'ms']) anim[k] = a.keys.map((q) => ({ t: q.t, v: q[k], ease: 'linear' }))
-        return { ...c, anim, mask: { ...c.mask, from: a.from, to: a.to } }
+        for (const k of ['mx', 'my', 'ms']) delete anim[k] // the outlines already hold the movement
+        return { ...c, anim, mask: { ...c.mask, from: a.from, to: a.to, frames: a.frames, pts: a.frames[0].pts } }
       }
       return commit(state, mapClips(state, f))
     }

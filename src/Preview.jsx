@@ -34,6 +34,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
     window.__aels = aels.current // for the developer self-test
     window.__els = els.current // for the developer self-test
     import('./smartMask.js').then((m) => (window.__smartMask = m)) // developer self-test
+    import('./sam2.js').then((m) => (window.__sam2 = m))
     let raf
     let clock = { ms: 0, t0: 0, seek: -1, playing: false }
     let haveFrame = false

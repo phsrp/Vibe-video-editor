@@ -134,10 +134,12 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
   const mk = clip.mask
   // the AI model for the smart mask is downloaded once, on request
   const [models, setModels] = useState(null) // {ready, totalBytes}
+  const [gpu, setGpu] = useState(null) // the graphics card: {ok, weak, name}; the AI needs one
   const [dl, setDl] = useState(null) // {received, total} while downloading
   const [dlErr, setDlErr] = useState('')
   useEffect(() => {
     window.api.modelsStatus().then(setModels)
+    import('./smartMask.js').then((m) => m.gpuInfo()).then(setGpu)
     return window.api.onModelsProgress(setDl)
   }, [])
   const download = async () => {
@@ -148,7 +150,9 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
     setModels(r)
     if (r.error) setDlErr(r.error)
   }
-  const ready = !!(models && models.ready)
+  const info = models // the AI model (downloaded on request)
+  const noGpu = gpu !== null && !gpu.ok // no usable graphics card: the AI cannot run
+  const ready = !!(info && info.ready) && !noGpu
   const start = () => dispatch({ type: 'checkpoint' })
   const set = (patch, live) => dispatch({ type: 'setMask', id: clip.id, patch, live })
   const shapeBtn = (shape, label) => (
@@ -182,16 +186,22 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
             className={'mini wide' + (mode === 'maskdrawsmart' ? ' on' : '')}
             disabled={!ready}
             onClick={() => setMode(mode === 'maskdrawsmart' ? 'mask' : 'maskdrawsmart')}
-            title={ready ? 'Draw a loop around the subject and the AI finds its exact edges on this frame' : 'Download the AI model first (below)'}
+            title={ready ? 'Draw a loop around the subject and the AI finds its exact edges on this frame' : noGpu ? 'Needs a graphics card' : 'Download the AI model first (below)'}
           >
             <Icon name="star" size={13} /> Smart select (AI)
           </button>
         </div>
       )}
-      {!clip.text && !ready && (
+      {!clip.text && noGpu && (
+        <div className="hint warn">Smart select and tracking need a graphics card, and this computer does not seem to have a usable one, so they cannot run here. The rectangle, ellipse, draw and click-points masks still work.</div>
+      )}
+      {!clip.text && !noGpu && gpu && gpu.weak && (
+        <div className="hint warn">This computer's graphics ({gpu.name || 'basic integrated graphics'}) look basic. Smart select and tracking will run, but slowly: tracking can take minutes rather than seconds.</div>
+      )}
+      {!clip.text && !noGpu && !(info && info.ready) && (
         <>
           <div className="hint left">
-            Smart select uses an AI model (about {models ? Math.round(models.totalBytes / 1e6) : 45} MB). It is downloaded once from the internet and then works without it.
+            Smart select and tracking use an AI model (about {info ? Math.round(info.totalBytes / 1e6) : 112} MB). It is downloaded once from the internet and then works without it.
           </div>
           {dl ? (
             <>
@@ -199,14 +209,14 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
               <div className="hint left">Downloading… {Math.round((dl.received / Math.max(1, dl.total)) * 100)}%</div>
             </>
           ) : (
-            <button className="mini wide" disabled={!models} onClick={download}><Icon name="download" size={13} /> Download the AI model</button>
+            <button className="mini wide" disabled={!info} onClick={download}><Icon name="download" size={13} /> Download the AI model</button>
           )}
           {dlErr && <div className="hint warn">{dlErr}</div>}
         </>
       )}
       {mode === 'maskdraw' && <div className="hint left">Draw a loop around the subject on the preview, then let go.</div>}
       {mode === 'maskpoly' && <div className="hint left">Click around the subject to place points. Click the first point, double-click or press Enter to finish. Afterwards drag any point to adjust it, double-click the outline to add a point, right-click a point to remove it.</div>}
-      {mode === 'maskdrawsmart' && <div className="hint left">Draw a loose loop around the subject you want. The AI works out its exact edges. It looks at this one frame; use the Mask X / Y keyframes to follow it.</div>}
+      {mode === 'maskdrawsmart' && <div className="hint left">Draw a loose loop around the subject you want. The AI works out its exact edges. When you let go, you can choose to track it through the video.</div>}
       {mk && (
         <>
           <FxSlider label="Soft edge" value={mk.feather || 0} min={0} max={100} onStart={start} onChange={(v) => set({ feather: v }, true)} />
@@ -216,7 +226,7 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
             <button className={'mini wide' + (mode === 'mask' ? ' on' : '')} onClick={() => setMode(mode === 'mask' ? 'transform' : 'mask')}>{mode === 'mask' ? 'Hide mask on preview' : 'Show mask on preview'}</button>
             <button className="mini wide" onClick={() => dispatch({ type: 'clearMask', id: clip.id })}>Remove mask</button>
           </div>
-          <div className="hint left">Drag inside the mask to move it. To make it follow something, add a keyframe, move the playhead and drag it again.</div>
+          <div className="hint left">{mk.frames && mk.frames.length ? "This mask is tracked: it has its own outline for every moment of the video. Draw it again to change it." : "Drag inside the mask to move it. To make it follow the subject, draw the mask around it and choose Track."}</div>
           {!clip.text && (
             <button className="mini wide" onClick={() => dispatch({ type: 'maskCopyAbove', id: clip.id })} title="Makes a copy of this clip on a new track at the top, with the same mask, so the subject shows in front of text on the tracks below">
               <Icon name="layers" size={13} /> Subject in front of text

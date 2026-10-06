@@ -5,6 +5,8 @@
 
 export const MASK_DEFAULT = { shape: 'ellipse', cx: 0.5, cy: 0.5, w: 0.5, h: 0.6, rot: 0, pts: [], feather: 8, expand: 0, invert: false }
 export const MAX_POLY = 64
+// where a tracked subject is not in the picture: a tiny shape outside it, so the mask shows nothing
+const OFF_PICTURE = [[-2, -2], [-1.99, -2], [-2, -1.99]]
 
 const NONE = { mk: [0, 0, 0, 0], mb: [0, 0, 0, 0], mr: [1, 0], pts: new Float32Array((MAX_POLY + 1) * 2), n: 0 }
 
@@ -15,7 +17,24 @@ export const maskAt = (clip, ts) => {
   if (!m) return undefined
   if (m.from != null && ts < m.from - 0.0005) return undefined
   if (m.to != null && ts > m.to + 0.0005) return undefined
+  // a tracked outline: the shape this moment has (the nearest look), instead of the one fixed shape
+  if (m.frames && m.frames.length) {
+    const pts = frameAt(m.frames, ts).pts
+    return { ...m, pts: pts && pts.length >= 3 ? pts : OFF_PICTURE }
+  }
   return m
+}
+// the tracked look nearest to second ts of the file (frames are sorted by t)
+export function frameAt(frames, ts) {
+  let lo = 0
+  let hi = frames.length - 1
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (frames[mid].t < ts) lo = mid + 1
+    else hi = mid
+  }
+  if (lo > 0 && Math.abs(frames[lo - 1].t - ts) <= Math.abs(frames[lo].t - ts)) lo--
+  return frames[lo]
 }
 // the part of the clip (source seconds) the mask covers
 export const maskSpan = (clip) => {

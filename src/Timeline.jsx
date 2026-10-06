@@ -331,13 +331,27 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
       const tr = ids.size === 1 ? rowUnder(ev.clientY, 'v:') : null
       over = tr && !locked('v:' + tr) ? tr : null
       setDropRow(over ? 'v:' + over : null)
-      setDrag({ ids, dx, target: over ? null : targetFor(dx) })
+      // moving without passing a neighbour leaves a gap (no insert line); passing one reorders
+      setDrag({ ids, dx, target: over || targetFor(dx) === targetFor(0) ? null : targetFor(dx) })
     }
     const up = (ev) => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       if (moved && over) dispatch({ type: 'clipToOverlay', id: c.id, trackId: over, start: Math.max(0, c.start + (ev.clientX - x0) / zoom) })
-      else if (moved) dispatch({ type: 'moveClips', ids: [...ids], toIndex: targetFor(ev.clientX - x0) })
+      else if (moved) {
+        const dx = ev.clientX - x0
+        const idx = targetFor(dx)
+        // dragged without passing a neighbour: the empty time in front of the clip changes (a gap, shown as black)
+        let gap = 0
+        if (idx === targetFor(0)) {
+          const first = clips.find((x) => ids.has(x.id))
+          const before = clips.filter((x, i) => !ids.has(x.id) && i < clips.indexOf(first))
+          const prev = before[before.length - 1]
+          gap = Math.max(0, first.start + dx / zoom - (prev ? prev.start + prev.dur : 0))
+          if (gap * zoom < 9) gap = 0
+        }
+        dispatch({ type: 'moveMainTo', ids: [...ids], toIndex: idx, gap })
+      }
       else if (wasSelected && !mod) dispatch({ type: 'select', id: c.id })
       setDrag(null)
       setDropRow(null)
@@ -726,6 +740,24 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
       <RowLabel name={state.mainName} onRename={(name) => dispatch({ type: 'renameRow', key, name })} onGrip={(e) => startRowDrag(e, key)} {...rowFlags(key)} />
       <div className="lane" onDragOver={onVideoDragOver} onDragLeave={() => setDropIdx(null)} onDrop={onVideoDrop}>
         <div className="lane-inner" style={{ left: TRACK_PAD }}>
+          {clips
+            .filter((c) => c.gap > 0)
+            .map((c) => (
+              <div
+                key={'gap' + c.id}
+                className={'gap-block' + (sel.has('gap:' + c.id) ? ' selected' : '')}
+                style={{ left: (c.start - c.gap) * zoom, width: Math.max(4, c.gap * zoom) }}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return
+                  e.stopPropagation()
+                  dispatch({ type: 'select', id: 'gap:' + c.id })
+                }}
+                title="Empty time: the preview and export show black here. Select it and press Delete (or click ×) to close the gap."
+              >
+                <span>{c.gap * zoom > 60 ? 'Gap ' + fmtDur(c.gap) : ''}</span>
+                <button className="gap-x" onPointerDown={(e) => e.stopPropagation()} onClick={() => !locked('main') && dispatch({ type: 'closeGap', id: c.id })} title="Close this gap">×</button>
+              </div>
+            ))}
           {clips.map((c) => {
             const m = mediaOf(c)
             if (!m) return null

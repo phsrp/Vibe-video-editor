@@ -146,6 +146,11 @@ button.mini.on { background: color-mix(in srgb, var(--love) 25%, var(--panel2));
 /* keyframe markers on a clip */
 .kf { position: absolute; bottom: 5px; width: 11px; height: 11px; margin-left: -5px; background: var(--accent2); border: 1px solid var(--bg); transform: rotate(45deg); z-index: 4; cursor: ew-resize; }
 .kf:hover { background: var(--text); }
+/* empty time on the main track */
+.gap-block { position: absolute; top: 6px; height: 64px; box-sizing: border-box; border-radius: 6px; border: 2px dashed var(--line); background: repeating-linear-gradient(135deg, #000 0 8px, #0b0b10 8px 16px); color: var(--dim); font-size: 11px; display: flex; align-items: center; justify-content: center; cursor: pointer; overflow: hidden; z-index: 1; }
+.gap-block.selected { border-color: var(--accent2); color: var(--text); }
+.gap-block .gap-x { position: absolute; right: 3px; top: 3px; padding: 0 5px; line-height: 14px; background: transparent; border: none; color: var(--dim); cursor: pointer; font-size: 13px; }
+.gap-block .gap-x:hover { color: var(--text); background: rgba(255,255,255,.1); }
 .tl-row.drop-here { outline: 2px dashed var(--accent2); outline-offset: -2px; background: color-mix(in srgb, var(--accent2) 10%, transparent); }
 /* the mask on a clip: a bar you can shorten, lengthen, move or remove */
 .mask-bar { position: absolute; top: 21px; height: 15px; z-index: 3; display: flex; align-items: center; justify-content: center; border-radius: 4px; background: color-mix(in srgb, var(--iris, #c4a7e7) 75%, transparent); border: 1px solid var(--iris, #c4a7e7); color: #fff; font-size: 10px; cursor: grab; overflow: hidden; }

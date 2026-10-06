@@ -566,11 +566,16 @@ ipcMain.handle('update:snooze', () => {
 ipcMain.handle('update:install', () => updater && updater.quitAndInstall())
 ipcMain.handle('update:debug', (_e, s) => process.env.VIBE_SELFTEST && sendUpdate(s)) // for the developer self-test
 ipcMain.handle('app:version', () => app.getVersion())
-// The AI model for the smart mask (MobileSAM, MIT / Apache-2.0 licence). It is not part of the installer: it is
-// downloaded once, on request, from Hugging Face into the app's data folder.
+// The AI model for the smart mask and tracking: SAM 2.1 Small (Meta, Apache-2.0), run on the graphics card (WebGPU).
+// It is not part of the installer: it is downloaded once, on request, from Hugging Face into the app's data folder.
+const SAM2_URL = 'https://huggingface.co/diffusionstudio/sam2.1-small-video-onnx-fp16/resolve/927ecec6e6ae2727d0af7720eefdb07f2efe4689/'
 const MODEL_FILES = [
-  { name: 'mobile_sam_image_encoder.onnx', url: 'https://huggingface.co/Acly/MobileSAM/resolve/main/mobile_sam_image_encoder.onnx', size: 28157093, sha256: '580F5FB648EA1062C0AABC26217AED56921985F03F0CBBD852BBA81D760CC749' },
-  { name: 'sam_mask_decoder_single.onnx', url: 'https://huggingface.co/Acly/MobileSAM/resolve/main/sam_mask_decoder_single.onnx', size: 16501323, sha256: '93915FC7C993AB9D59AB8C9CCD3BCE37F7509C81AB4150A74ABD4D2ABBD8570D' },
+  { name: 'sam2/constants.json', url: SAM2_URL + 'constants.json', size: 9820, sha256: '09397F7251C159B64A2D581CC3EA0DBB3CF720C2E60777CB14E244405ED1C305' },
+  { name: 'sam2/vision_encoder.onnx', url: SAM2_URL + 'onnx/vision_encoder.onnx', size: 83679474, sha256: 'FB570036F5AFAC59EF20848958B075C84DA746E333EFD863104D94604652EFC4' },
+  { name: 'sam2/mask_decoder.onnx', url: SAM2_URL + 'onnx/mask_decoder.onnx', size: 8910345, sha256: '999B3B47BF2E924D522ED6CC011FA2C9B651754CC07895EB0DA16A28A5CE7C4D' },
+  { name: 'sam2/memory_encoder.onnx', url: SAM2_URL + 'onnx/memory_encoder.onnx', size: 2807884, sha256: 'F36324E383DBF21FCD549169AEDF698DB00C307FD9A49538C0E5F0AA168E4F99' },
+  { name: 'sam2/memory_attention.onnx', url: SAM2_URL + 'onnx/memory_attention.onnx', size: 16175204, sha256: '6666BE8CA502B5C16E9A113D3D3934996D32F27E93BEE5E66A8317FCCEEC9985' },
+  { name: 'sam2/pointer_tpos.onnx', url: SAM2_URL + 'onnx/pointer_tpos.onnx', size: 34228, sha256: 'F9C1B36E0AA9DC6B7C05B02A8FDAA17CC671D967FFCACC14FCD3177E65EC25E9' },
 ]
 const modelsDir = () => {
   const d = path.join(app.getPath('userData'), 'models')
@@ -585,11 +590,14 @@ const modelReady = (m) => {
   }
 }
 function modelStatus() {
-  const files = MODEL_FILES.map((m) => ({ name: m.name, size: m.size, ready: modelReady(m) }))
+  const mdir = modelsDir()
+  // the earlier, smaller model (MobileSAM) is not used any more: its files are removed
+  for (const old of ['mobile_sam_image_encoder.onnx', 'sam_mask_decoder_single.onnx']) fs.rmSync(path.join(mdir, old), { force: true })
+  const p = (n) => path.join(mdir, n)
   return {
-    ready: files.every((x) => x.ready),
+    ready: MODEL_FILES.every(modelReady),
     totalBytes: MODEL_FILES.reduce((a, m) => a + m.size, 0),
-    paths: { encoder: path.join(modelsDir(), MODEL_FILES[0].name), decoder: path.join(modelsDir(), MODEL_FILES[1].name) },
+    paths: { constants: p('sam2/constants.json'), visionEncoder: p('sam2/vision_encoder.onnx'), maskDecoder: p('sam2/mask_decoder.onnx'), memoryEncoder: p('sam2/memory_encoder.onnx'), memoryAttention: p('sam2/memory_attention.onnx'), pointerTpos: p('sam2/pointer_tpos.onnx') },
   }
 }
 function downloadFile(url, dest, onBytes, redirects = 0) {
@@ -617,18 +625,21 @@ function downloadFile(url, dest, onBytes, redirects = 0) {
 }
 let modelJob = null
 ipcMain.handle('models:status', () => modelStatus())
-ipcMain.handle('models:download', async (e) => {
+ipcMain.handle('models:download', async () => {
   if (modelJob) return modelJob
+  const FILES = MODEL_FILES
   modelJob = (async () => {
     try {
       const crypto = require('crypto')
-      const total = MODEL_FILES.reduce((a, m) => a + m.size, 0)
-      let done = MODEL_FILES.filter(modelReady).reduce((a, m) => a + m.size, 0)
+      const total = FILES.reduce((a, m) => a + m.size, 0)
+      let done = FILES.filter(modelReady).reduce((a, m) => a + m.size, 0)
       const send = () => mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('models:progress', { received: done, total })
       send()
-      for (const m of MODEL_FILES) {
+      for (const m of FILES) {
         if (modelReady(m)) continue
-        const part = path.join(modelsDir(), m.name + '.part')
+        const dest = path.join(modelsDir(), m.name)
+        fs.mkdirSync(path.dirname(dest), { recursive: true })
+        const part = dest + '.part'
         await downloadFile(m.url, part, (n) => {
           done += n
           send()
@@ -638,7 +649,7 @@ ipcMain.handle('models:download', async (e) => {
           fs.rmSync(part, { force: true })
           throw new Error('The downloaded file was not what was expected, so it was thrown away. Try again.')
         }
-        fs.renameSync(part, path.join(modelsDir(), m.name))
+        fs.renameSync(part, dest)
       }
       return { ...modelStatus(), error: null }
     } catch (err) {

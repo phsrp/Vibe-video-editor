@@ -49,7 +49,7 @@ contextBridge.exposeInMainWorld('api', {
   reverseProxy: (o) => ipcRenderer.invoke('media:reverse', o),
   measureLoudness: (o) => ipcRenderer.invoke('audio:loudness', o),
   modelsStatus: () => ipcRenderer.invoke('models:status'),
-  modelsDownload: () => ipcRenderer.invoke('models:download'),
+  modelsDownload: (set) => ipcRenderer.invoke('models:download', set),
   onModelsProgress: (cb) => {
     const h = (_e, p) => cb(p)
     ipcRenderer.on('models:progress', h)

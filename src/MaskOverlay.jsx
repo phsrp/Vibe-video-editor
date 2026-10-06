@@ -5,39 +5,62 @@ import { evalTransform, evalProp, keyAt, PROPS, rectToFrame, frameToRect } from 
 import { maskPlaced, polyCentre, MAX_POLY, maskAt } from './masks.js'
 
 // The question after a shape was drawn: follow the subject through the video, and for how long?
+// Tracking follows the subject's outline: pixel motion (OpenCV.js) moves it, the AI snaps it to the real edge.
 function TrackDialog({ clip, state, media, dispatch, onClose }) {
   const sp = speedOf(clip)
   const ts = srcAt(clip, state.playhead)
   const remain = Math.max(0.2, Math.round((clip.start + clip.dur - state.playhead) * 10) / 10)
   const [secs, setSecs] = useState(Math.min(5, remain))
+  const [quad, setQuad] = useState(false) // straight edges, 4 corners (plates, screens, signs)
   const [prog, setProg] = useState(null) // [done, total] while tracking
+  const [warn, setWarn] = useState(false) // no graphics card: very slow, asked once
   const [err, setErr] = useState('')
+  const [gpu, setGpu] = useState(null) // the graphics card does the tracking, which is much faster
+  useEffect(() => {
+    import('./smartMask.js').then((m) => m.gpuInfo()).then(setGpu)
+  }, [])
   const cancel = useRef(false)
   const canTrack = media && media.type === 'video' && clip.mask && clip.mask.shape === 'poly'
-  const run = async () => {
+  const run = async (confirmed) => {
     cancel.current = false
     setErr('')
-    setProg([0, 1])
     try {
       const st = await window.api.modelsStatus()
-      const { trackSubject, engineKind } = await import('./smartMask.js')
-      const kind = await engineKind(st.paths)
+      const { trackOutline, gpuInfo } = await import('./smartMask.js')
+      const g = await gpuInfo()
+      if (!g.ok) throw new Error('Tracking needs a graphics card, and this computer does not seem to have a usable one.')
+      if (!st.ready) throw new Error('Download the AI model first: it is in the Mask section of the Inspector, under Smart select.')
+      // basic integrated graphics: it will run, but slowly. Asked once.
+      let warned = false
+      try {
+        warned = localStorage.getItem('vibe.slowGpuWarned') === '1'
+      } catch (e) {}
+      if (g.weak && !warned && !confirmed) return setWarn(true)
+      if (g.weak && confirmed) {
+        try {
+          localStorage.setItem('vibe.slowGpuWarned', '1')
+        } catch (e) {}
+      }
+      setWarn(false)
+      setProg([0, 1])
       const span = Math.min(secs, remain)
       const end = Math.min(clip.out, Math.max(clip.in, clip.reverse ? ts - span * sp : ts + span * sp))
-      // on the graphics card a look takes a fraction of a second, so look often; on the processor about 2 seconds
-      const n = Math.max(2, kind === 'gpu' ? Math.round(span / Math.max(0.1, span / 150)) + 1 : Math.round(span / Math.max(0.25, span / 40)) + 1)
+      const len = Math.abs(end - ts)
+      // about 30 looks a second (fewer for a very long stretch); each look takes a fraction of a second on a graphics card
+      const n = Math.max(2, Math.min(900, Math.round(len * 30)) + 1)
       const times = Array.from({ length: n }, (_, i) => ts + ((end - ts) * i) / (n - 1))
-      const keys = await trackSubject({
+      const frames = await trackOutline({
         file: media.path,
         startPts: clip.mask.pts,
         times,
         paths: st.paths,
+        quad,
         onProgress: (d, t) => setProg([d, t]),
         isCancelled: () => cancel.current,
       })
-      if (!keys) return onClose()
-      keys.sort((p, q) => p.t - q.t)
-      dispatch({ type: 'setMaskTrack', id: clip.id, keys, from: Math.min(ts, end), to: Math.max(ts, end) })
+      if (!frames) return onClose()
+      frames.sort((p, q) => p.t - q.t)
+      dispatch({ type: 'setMaskOutline', id: clip.id, frames, from: Math.min(ts, end), to: Math.max(ts, end) })
       onClose()
     } catch (e) {
       setProg(null)
@@ -50,30 +73,42 @@ function TrackDialog({ clip, state, media, dispatch, onClose }) {
         <h3>Follow the subject?</h3>
         {prog ? (
           <>
-            <p className="hint-sm">Tracking… the AI is finding the subject in each moment ({prog[0]} of {prog[1]}).</p>
+            <p className="hint-sm">Tracking… following the subject's outline in each moment ({prog[0]} of {prog[1]}).</p>
             <div className="bar"><div className="bar-fill" style={{ width: (100 * prog[0]) / Math.max(1, prog[1]) + '%' }} /></div>
             <div className="btn-row" style={{ marginTop: 12 }}>
               <button onClick={() => (cancel.current = true)}>Cancel</button>
+            </div>
+          </>
+        ) : warn ? (
+          <>
+            <p className="hint-sm"><b>This computer's graphics look basic.</b> Tracking will run, but <b>slowly</b>: it can take several minutes for a few seconds of video. A computer with a proper graphics card does the same in a few seconds.</p>
+            <div className="btn-row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
+              <button onClick={() => setWarn(false)}>Back</button>
+              <button className="primary" onClick={() => run(true)}>Track anyway</button>
             </div>
           </>
         ) : (
           <>
             <p className="hint-sm">
               {canTrack
-                ? 'The mask can follow the subject as the video plays. The mask then lasts only for the time you choose; you can change that on the timeline afterwards.'
+                ? "The mask can follow the subject as the video plays, including when it turns or changes shape. The mask then lasts only for the time you choose; you can change that on the timeline afterwards."
                 : 'Tracking works on video clips with a drawn or smart mask. The mask now covers the whole clip; shorten it on the timeline.'}
             </p>
             {canTrack && (
-              <label className="minput" style={{ gridTemplateColumns: '1fr 80px 40px' }}>
-                <span>Follow it for</span>
-                <input type="number" min="0.5" max={remain} step="0.5" value={secs} onChange={(e) => setSecs(Math.max(0.5, Math.min(remain, +e.target.value || 0.5)))} />
-                <span className="unit">sec</span>
-              </label>
+              <>
+                <label className="minput" style={{ gridTemplateColumns: '1fr 80px 40px' }}>
+                  <span>Follow it for</span>
+                  <input type="number" min="0.5" max={remain} step="0.5" value={secs} onChange={(e) => setSecs(Math.max(0.5, Math.min(remain, +e.target.value || 0.5)))} />
+                  <span className="unit">sec</span>
+                </label>
+                {gpu && gpu.ok && !gpu.weak && <p className="hint-sm" style={{ margin: '6px 0' }}>On your graphics card this takes roughly {Math.max(2, Math.round(Math.min(secs, remain) * 9))} seconds.</p>}
+                <label className="chk"><input type="checkbox" checked={quad} onChange={(e) => setQuad(e.target.checked)} />Straight edges, 4 corners (licence plates, screens, signs)</label>
+              </>
             )}
             {err && <p className="hint-sm" style={{ color: 'var(--love, #eb6f92)' }}>{err}</p>}
             <div className="btn-row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
               <button onClick={onClose}>{canTrack ? "Don't track" : 'OK'}</button>
-              {canTrack && <button className="primary" onClick={run}>Track</button>}
+              {canTrack && <button className="primary" onClick={() => run(false)}>Track</button>}
             </div>
           </>
         )}
@@ -220,7 +255,7 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
     const keep = { feather: clip.mask ? clip.mask.feather : 6, invert: clip.mask ? clip.mask.invert : false, expand: clip.mask ? clip.mask.expand : 0 }
     const finish = (pts) => {
       if (pts.length < 3) return
-      dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts: pts.slice(0, MAX_POLY), from: undefined, to: undefined, ...keep } })
+      dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts: pts.slice(0, MAX_POLY), from: undefined, to: undefined, frames: undefined, ...keep } })
       setPen([])
       setMode('mask')
       setAsk(true)
@@ -287,7 +322,7 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
         if (raw.length < 4) return
         const keep = { feather: clip.mask ? clip.mask.feather : 6, invert: clip.mask ? clip.mask.invert : false, expand: clip.mask ? clip.mask.expand : 0 }
         if (!smart) {
-          dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts: fewPoints(raw), from: undefined, to: undefined, ...keep } })
+          dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts: fewPoints(raw), from: undefined, to: undefined, frames: undefined, ...keep } })
           setMode('mask')
           setAsk(true)
           return
@@ -304,9 +339,9 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
           try {
             const { findSubject } = await import('./smartMask.js')
             const st = await window.api.modelsStatus()
-            const pts = await findSubject({ el: frame.el, w: frame.w, h: frame.h, lasso: fewPoints(raw), paths: st.paths, frameKey: clip.id + ':' + ts.toFixed(3) })
+            const pts = await findSubject({ el: frame.el, w: frame.w, h: frame.h, lasso: fewPoints(raw), paths: st.paths })
             if (pts && pts.length >= 3) {
-              dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts, from: undefined, to: undefined, ...keep } })
+              dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts, from: undefined, to: undefined, frames: undefined, ...keep } })
               setMode('mask')
               setBusy('')
               setAsk(true)
@@ -334,7 +369,8 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
     )
   }
 
-  const m = maskPlaced(clip.mask, tf)
+  const tracked = !!(clip.mask.frames && clip.mask.frames.length) // a tracked outline changes every moment: shown, not edited
+  const m = maskPlaced(maskAt(clip, ts) || clip.mask, tf)
   const sc = Math.max(0.01, (tf.ms != null ? tf.ms : 100) / 100)
   let outline = []
   let handles = []
@@ -439,11 +475,11 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
     <div className="xf-overlay mask-ov">
       {ask && <TrackDialog clip={clip} state={state} media={media} dispatch={dispatch} onClose={() => setAsk(false)} />}
       <svg width={BW} height={BH} viewBox={`0 0 ${BW} ${BH}`}>
-        <polygon points={outline.map((p) => p.join(',')).join(' ')} className="mask-line" onPointerDown={dragBody} onDoubleClick={addPoint} style={{ pointerEvents: 'all', cursor: 'move' }} />
+        <polygon points={outline.map((p) => p.join(',')).join(' ')} className="mask-line" onPointerDown={tracked ? undefined : dragBody} onDoubleClick={tracked ? undefined : addPoint} style={tracked ? { pointerEvents: 'none' } : { pointerEvents: 'all', cursor: 'move' }} />
         {rotPt && <line x1={(outline[0][0] + outline[1][0]) / 2} y1={(outline[0][1] + outline[1][1]) / 2} x2={rotPt[0]} y2={rotPt[1]} className="xf-line" />}
       </svg>
       <div className="xf-handle xf-rot" style={{ left: centre[0], top: centre[1], width: 8, height: 8, margin: '-4px 0 0 -4px', pointerEvents: 'none' }} />
-      {m.shape === 'poly' && outline.map((p, i) => <div key={i} className="xf-handle xf-corner" style={{ left: p[0], top: p[1] }} onPointerDown={(e) => dragPoint(e, i)} onContextMenu={(e) => removePoint(e, i)} title="Drag to move this point. Right-click to remove it. Double-click the outline to add a point." />)}
+      {m.shape === 'poly' && !tracked && outline.map((p, i) => <div key={i} className="xf-handle xf-corner" style={{ left: p[0], top: p[1] }} onPointerDown={(e) => dragPoint(e, i)} onContextMenu={(e) => removePoint(e, i)} title="Drag to move this point. Right-click to remove it. Double-click the outline to add a point." />)}
       {handles.map((p, i) => <div key={i} className="xf-handle xf-corner" style={{ left: p[0], top: p[1] }} onPointerDown={dragCorner} title="Drag to resize the mask" />)}
       {rotPt && <div className="xf-handle xf-rot" style={{ left: rotPt[0], top: rotPt[1] }} onPointerDown={dragRotate} title="Turn the mask" />}
     </div>
