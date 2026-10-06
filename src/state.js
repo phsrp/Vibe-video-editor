@@ -324,6 +324,22 @@ export function reducer(state, a) {
       return items.length ? { ...state, media: [...state.media, ...items] } : state
     }
 
+    // take a file out of the project: it leaves the media pool and every clip made from it leaves the timeline.
+    // Undo history is cleared (an undo could not bring back clips whose file is gone from the pool).
+    case 'removeMedia': {
+      const gone = (c) => c.mediaId === a.id
+      return {
+        ...state,
+        media: state.media.filter((m) => m.id !== a.id),
+        clips: state.clips.filter((c) => !gone(c)),
+        overlayClips: state.overlayClips.filter((c) => !gone(c)),
+        audioClips: state.audioClips.filter((c) => !gone(c)),
+        selection: [],
+        past: [],
+        future: [],
+      }
+    }
+
     // replace the whole project (open / new)
     case 'loadProject':
       return {

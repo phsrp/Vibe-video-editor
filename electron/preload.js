@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('api', {
   libraryFolder: () => ipcRenderer.invoke('library:folder'),
   libraryList: () => ipcRenderer.invoke('library:list'),
   libraryAdd: () => ipcRenderer.invoke('library:add'),
+  libraryDelete: (file) => ipcRenderer.invoke('library:delete', file),
   extractAudio: (file, id, streams) => ipcRenderer.invoke('media:extractAudio', { file, id, streams }),
   freezeFrame: (file, time, label) => ipcRenderer.invoke('media:freeze', { file, time, label }),
   listTransitions: () => ipcRenderer.invoke('transitions:list'),

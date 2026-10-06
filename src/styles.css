@@ -76,6 +76,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .bin-item:hover { border-color: var(--accent); }
 .bin-item .thumb { width: 84px; height: 48px; flex: none; border-radius: 4px; background: #000 center/cover; position: relative; }
 .bin-item .badge { position: absolute; left: 3px; bottom: 3px; font-size: 9px; text-transform: uppercase; background: rgba(0,0,0,.7); color: #fff; padding: 1px 4px; border-radius: 3px; }
+.bin-item { position: relative; }
+.bin-x { position: absolute; top: 3px; right: 4px; display: none; padding: 0 6px; line-height: 16px; font-size: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; color: var(--dim); cursor: pointer; z-index: 2; }
+.bin-item:hover .bin-x { display: block; }
+.bin-x:hover { color: var(--text); border-color: var(--accent); }
 .bin-item .meta { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .bin-item .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bin-item .sub { color: var(--dim); font-size: 11px; margin-top: 2px; }

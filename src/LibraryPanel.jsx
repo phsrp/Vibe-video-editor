@@ -4,7 +4,7 @@ import { fmtTime, toUrl } from './state.js'
 
 // The Library: videos, images and sounds you use again and again, kept in Documents > Vibe Video Editor
 // Library. Drag one onto the timeline (or double-click it) to use it in the project.
-export default function LibraryPanel({ open, setOpen, onAddMedia, onUse }) {
+export default function LibraryPanel({ open, setOpen, onAddMedia, onUse, usedPaths = [] }) {
   const [files, setFiles] = useState(null) // [{path, name}] or null while loading
   const [items, setItems] = useState({}) // path -> described media (thumbnail, length...)
   const loading = useRef(0)
@@ -29,6 +29,18 @@ export default function LibraryPanel({ open, setOpen, onAddMedia, onUse }) {
   const add = async () => {
     const n = await window.api.libraryAdd()
     if (n) refresh()
+  }
+
+  // delete a file from the library folder: it goes to the Recycle Bin
+  const remove = async (f) => {
+    const inProject = usedPaths.includes(f.path)
+    const nl = '\n\n'
+    const msg =
+      `Delete "${f.name}" from your library?${nl}It moves to the Recycle Bin, so you can get it back from there.` +
+      (inProject ? `${nl}It is also in this project: its clips will show as missing until you put the file back.` : '')
+    if (!window.confirm(msg)) return
+    await window.api.libraryDelete(f.path)
+    refresh()
   }
 
   return (
@@ -82,6 +94,7 @@ export default function LibraryPanel({ open, setOpen, onAddMedia, onUse }) {
                     {m && m.type === 'audio' && <span className="note"><Icon name="music" size={22} /></span>}
                     {m && <span className="badge">{m.type}</span>}
                   </div>
+                  <button className="bin-x" title="Delete from the library (Recycle Bin)" onClick={(e) => { e.stopPropagation(); remove(f) }}>×</button>
                   <div className="meta">
                     <div className="name">{f.name}</div>
                     <div className="sub">{m ? (m.type !== 'image' ? fmtTime(m.duration).slice(0, 5) : `${m.width}×${m.height}`) : 'getting ready…'}</div>

@@ -1,2 +1,1 @@
-- Mask tracking now uses DAM4SAM's distractor-aware memory on top of SAM 2: it remembers extra reference frames when a lookalike is nearby, to help the mask stay on the right object and find it again after it hides
-- Changed: new text now has no fade in or out by default. The fade, pop, slide and typewriter options are all still there, and the ready-made looks keep theirs
+- New: delete media from inside the editor. Hover over an item in the Media panel and click its x to take it out of the project, or over an item in the Library and click its x to delete the file (it goes to the Recycle Bin). You are asked first

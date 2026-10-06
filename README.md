@@ -109,6 +109,7 @@
 
 ### Library
 - The **Library** panel (next to the Media panel; it starts folded away, click **Library** to open it) shows everything in **Documents > Vibe Video Editor Library**.
+- **Deleting files:** hover over an item in the **Media** panel and click its **×** to take it out of the project (if it is used on the timeline you are asked first, and those clips are removed too; the file on your computer is not touched). Hover over an item in the **Library** and click its **×** to delete the file from your library folder: it moves to the Recycle Bin, so you can get it back from there.
 - Drag an item onto the timeline, or double-click it to add it. Videos, images and audio files all work, and they are only added to a project when you use them.
 - **Add files…** copies files into the library, **Open library folder** opens it in Explorer, and the refresh button picks up files you dropped in by hand.
 - If the library is empty it says **Upload your own** and gives you a button to the folder.

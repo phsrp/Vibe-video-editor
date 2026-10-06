@@ -355,6 +355,18 @@ ipcMain.handle('library:list', () => {
   walk(libraryDir(), 0)
   return out.sort((x, y) => x.name.localeCompare(y.name))
 })
+// Delete a file from the library: it goes to the Recycle Bin (only files inside the library folder are allowed)
+ipcMain.handle('library:delete', async (_e, file) => {
+  try {
+    const dir = path.resolve(libraryDir()) + path.sep
+    const p = path.resolve(String(file))
+    if (!p.startsWith(dir) || !fs.existsSync(p)) return false
+    await shell.trashItem(p)
+    return true
+  } catch {
+    return false
+  }
+})
 // "Add files...": pick files and copy them into the library
 ipcMain.handle('library:add', async () => {
   const r = await dialog.showOpenDialog(mainWindow, {

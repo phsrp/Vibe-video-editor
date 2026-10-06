@@ -391,6 +391,15 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     dispatch({ type: 'setPlaying', value: true })
   }
 
+  // take a file out of this project (the file itself on the computer is not touched)
+  const removeMedia = (m) => {
+    const n = [...state.clips, ...state.overlayClips, ...state.audioClips].filter((c) => c.mediaId === m.id).length
+    const nl = '\n\n'
+    const msg = n
+      ? `"${m.name}" is used ${n} time${n === 1 ? '' : 's'} on the timeline. Remove it from the project and delete those clips too?${nl}This cannot be undone. The file itself on your computer is not touched.`
+      : `Remove "${m.name}" from this project?${nl}The file itself on your computer is not touched.`
+    if (window.confirm(msg)) dispatch({ type: 'removeMedia', id: m.id })
+  }
   const addMediaToTimeline = (m) => {
     if (m.type === 'audio') dispatch({ type: 'addAudioClip', mediaId: m.id, trackId: null, start: state.playhead })
     else dispatch({ type: 'addClip', mediaId: m.id })
@@ -452,6 +461,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
                   {m.type === 'audio' && <span className="note"><Icon name="music" size={22} /></span>}
                   <span className="badge">{m.type}</span>
                 </div>
+                <button className="bin-x" title="Remove from this project" onClick={(e) => { e.stopPropagation(); removeMedia(m) }}>×</button>
                 <div className="meta">
                   <div className="name">{m.name}</div>
                   <div className="sub">
@@ -471,6 +481,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
           open={libOpen}
           setOpen={setLibOpen}
           onAddMedia={addMedia}
+          usedPaths={state.media.map((m) => m.path)}
           onUse={(m) => {
             addMedia([m])
             addMediaToTimeline(m)
