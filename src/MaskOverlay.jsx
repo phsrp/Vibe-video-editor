@@ -2,11 +2,11 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { layout, overlayLayout, soleVideoClip, srcAt, speedOf, aspectRatio } from './state.js'
 import { evalTransform, evalProp, keyAt, PROPS, rectToFrame, frameToRect } from './motion.js'
-import { maskPlaced, polyCentre, MAX_POLY, maskAt } from './masks.js'
+import { maskPlaced, polyCentre, MAX_POLY, maskAt, frameAt } from './masks.js'
 
 // The question after a shape was drawn: follow the subject through the video, and for how long?
 // Tracking follows the subject's outline: pixel motion (OpenCV.js) moves it, the AI snaps it to the real edge.
-function TrackDialog({ clip, state, media, dispatch, onClose }) {
+function TrackDialog({ clip, state, media, dispatch, onClose, fix, startPts }) {
   const sp = speedOf(clip)
   const ts = srcAt(clip, state.playhead)
   const remain = Math.max(0.2, Math.round((clip.start + clip.dur - state.playhead) * 10) / 10)
@@ -20,7 +20,7 @@ function TrackDialog({ clip, state, media, dispatch, onClose }) {
     import('./smartMask.js').then((m) => m.gpuInfo()).then(setGpu)
   }, [])
   const cancel = useRef(false)
-  const canTrack = media && media.type === 'video' && clip.mask && clip.mask.shape === 'poly'
+  const canTrack = media && media.type === 'video' && clip.mask && (fix || clip.mask.shape === 'poly')
   const run = async (confirmed) => {
     cancel.current = false
     setErr('')
@@ -44,14 +44,16 @@ function TrackDialog({ clip, state, media, dispatch, onClose }) {
       setWarn(false)
       setProg([0, 1])
       const span = Math.min(secs, remain)
-      const end = Math.min(clip.out, Math.max(clip.in, clip.reverse ? ts - span * sp : ts + span * sp))
+      // fixing a moment: track again from here to the end of the mask; otherwise for the seconds chosen
+      const end = fix ? (clip.reverse ? clip.mask.from : clip.mask.to) : Math.min(clip.out, Math.max(clip.in, clip.reverse ? ts - span * sp : ts + span * sp))
       const len = Math.abs(end - ts)
+      if (fix && !(len >= 0.1)) throw new Error('There is nothing after this moment to track.')
       // about 30 looks a second (fewer for a very long stretch); each look takes a fraction of a second on a graphics card
       const n = Math.max(2, Math.min(900, Math.round(len * 30)) + 1)
       const times = Array.from({ length: n }, (_, i) => ts + ((end - ts) * i) / (n - 1))
       const frames = await trackOutline({
         file: media.path,
-        startPts: clip.mask.pts,
+        startPts: fix ? startPts : clip.mask.pts,
         times,
         paths: st.paths,
         quad,
@@ -60,7 +62,11 @@ function TrackDialog({ clip, state, media, dispatch, onClose }) {
       })
       if (!frames) return onClose()
       frames.sort((p, q) => p.t - q.t)
-      dispatch({ type: 'setMaskOutline', id: clip.id, frames, from: Math.min(ts, end), to: Math.max(ts, end) })
+      if (fix) {
+        // the moments before this one stay as they are; this one and everything after it are the new tracking
+        const keep = clip.mask.frames.filter((f) => (clip.reverse ? f.t > ts + 0.017 : f.t < ts - 0.017))
+        dispatch({ type: 'setMaskOutline', id: clip.id, frames: [...keep, ...frames].sort((p, q) => p.t - q.t), from: clip.mask.from, to: clip.mask.to })
+      } else dispatch({ type: 'setMaskOutline', id: clip.id, frames, from: Math.min(ts, end), to: Math.max(ts, end) })
       onClose()
     } catch (e) {
       setProg(null)
@@ -70,7 +76,7 @@ function TrackDialog({ clip, state, media, dispatch, onClose }) {
   return createPortal(
     <div className="modal-bg">
       <div className="modal">
-        <h3>Follow the subject?</h3>
+        <h3>{fix ? 'Re-track from here?' : 'Follow the subject?'}</h3>
         {prog ? (
           <>
             <p className="hint-sm">Tracking… following the subject's outline in each moment ({prog[0]} of {prog[1]}).</p>
@@ -90,25 +96,27 @@ function TrackDialog({ clip, state, media, dispatch, onClose }) {
         ) : (
           <>
             <p className="hint-sm">
-              {canTrack
+              {fix
+                ? 'The outline on this moment, as you corrected it, is the starting point. This moment and everything after it, to the end of the mask, is tracked again. Earlier moments stay as they are.'
+                : canTrack
                 ? "The mask can follow the subject as the video plays, including when it turns or changes shape. The mask then lasts only for the time you choose; you can change that on the timeline afterwards."
                 : 'Tracking works on video clips with a drawn or smart mask. The mask now covers the whole clip; shorten it on the timeline.'}
             </p>
             {canTrack && (
               <>
-                <label className="minput" style={{ gridTemplateColumns: '1fr 80px 40px' }}>
+                {!fix && <label className="minput" style={{ gridTemplateColumns: '1fr 80px 40px' }}>
                   <span>Follow it for</span>
                   <input type="number" min="0.5" max={remain} step="0.5" value={secs} onChange={(e) => setSecs(Math.max(0.5, Math.min(remain, +e.target.value || 0.5)))} />
                   <span className="unit">sec</span>
-                </label>
+                </label>}
                 {gpu && gpu.ok && !gpu.weak && <p className="hint-sm" style={{ margin: '6px 0' }}>On your graphics card this takes roughly {Math.max(2, Math.round(Math.min(secs, remain) * 9))} seconds.</p>}
                 <label className="chk"><input type="checkbox" checked={quad} onChange={(e) => setQuad(e.target.checked)} />Straight edges, 4 corners (licence plates, screens, signs)</label>
               </>
             )}
             {err && <p className="hint-sm" style={{ color: 'var(--love, #eb6f92)' }}>{err}</p>}
             <div className="btn-row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
-              <button onClick={onClose}>{canTrack ? "Don't track" : 'OK'}</button>
-              {canTrack && <button className="primary" onClick={() => run(false)}>Track</button>}
+              <button onClick={onClose}>{fix ? 'Cancel' : canTrack ? "Don't track" : 'OK'}</button>
+              {canTrack && <button className="primary" onClick={() => run(false)}>{fix ? 'Re-track' : 'Track'}</button>}
             </div>
           </>
         )}
@@ -182,6 +190,7 @@ const fewPoints = (pts) => {
 export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFrame }) {
   const [busy, setBusy] = useState('') // text shown while the AI is working
   const [ask, setAsk] = useState(false) // the "follow the subject?" question is open
+  const [fixing, setFixing] = useState(false) // the "re-track from here" question is open
   const [pen, setPen] = useState([]) // points placed so far with the "click points" tool
   const [hoverPt, setHoverPt] = useState(null)
   const penRef = useRef(null)
@@ -369,7 +378,7 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
     )
   }
 
-  const tracked = !!(clip.mask.frames && clip.mask.frames.length) // a tracked outline changes every moment: shown, not edited
+  const tracked = !!(clip.mask.frames && clip.mask.frames.length) // a tracked outline changes every moment: this moment's outline is edited on its own
   const m = maskPlaced(maskAt(clip, ts) || clip.mask, tf)
   const sc = Math.max(0.01, (tf.ms != null ? tf.ms : 100) / 100)
   let outline = []
@@ -436,8 +445,7 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
       const ox = (tf.mx || 0) / 100
       const oy = (tf.my || 0) / 100
       const q = [c[0] + (p[0] - ox - c[0]) / sc, c[1] + (p[1] - oy - c[1]) / sc]
-      const pts = clip.mask.pts.map((x, j) => (j === i ? q : x))
-      set({ pts })
+      set({ pts: soft(clip.mask.pts, i, q) })
     })
 
   // double-click on the outline of a drawn shape adds a point there; right-click a point removes it
@@ -471,15 +479,102 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
     dispatch({ type: 'setMask', id: clip.id, patch: { pts: clip.mask.pts.filter((_, j) => j !== i) } })
   }
 
+  // ---- a tracked mask: correct this moment's outline (drag points, drag the shape, double-click to add, right-click to remove)
+  // a dense outline shows about 36 handles; dragging one moves its neighbours along with it, fading out smoothly
+  const stride = outline.length > 48 ? Math.ceil(outline.length / 36) : 1
+  const soft = (base, i, q) => {
+    const n = base.length
+    const dx = q[0] - base[i][0]
+    const dy = q[1] - base[i][1]
+    if (stride === 1) return base.map((x, j) => (j === i ? q : x))
+    const out = base.map((x) => x)
+    for (let k = -stride; k <= stride; k++) {
+      const w = 0.5 * (1 + Math.cos((Math.PI * k) / (stride + 1)))
+      const j = (i + k + n) % n
+      out[j] = [base[j][0] + dx * w, base[j][1] + dy * w]
+    }
+    return out
+  }
+  const fpts = tracked ? frameAt(clip.mask.frames, ts).pts || [] : []
+  const editable = tracked && fpts.length >= 3
+  const setFrame = (pts, live) => dispatch({ type: 'setMaskFrame', id: clip.id, t: ts, pts, live })
+  const dragPlain = (e, onMove) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const r = e.currentTarget.closest('.xf-overlay').getBoundingClientRect()
+    const P = (ev) => [ev.clientX - r.left, ev.clientY - r.top]
+    const p0 = P(e)
+    let started = false
+    const move = (ev) => {
+      if (!started) {
+        started = true
+        dispatch({ type: 'checkpoint' })
+      }
+      onMove(P(ev), p0)
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const dragPointT = (e, i) => {
+    const base = fpts
+    dragPlain(e, (P) => {
+      const q = fromPx(P[0], P[1])
+      setFrame(soft(base, i, q), true)
+    })
+  }
+  const dragBodyT = (e) => {
+    const base = fpts
+    dragPlain(e, (P, p0) => {
+      const a = fromPx(p0[0], p0[1])
+      const b = fromPx(P[0], P[1])
+      setFrame(base.map((p) => [p[0] + b[0] - a[0], p[1] + b[1] - a[1]]), true)
+    })
+  }
+  const addPointT = (e) => {
+    if (fpts.length >= MAX_POLY) return
+    const r = e.currentTarget.closest('.xf-overlay').getBoundingClientRect()
+    const q = fromPx(e.clientX - r.left, e.clientY - r.top)
+    let at = 0
+    let best = Infinity
+    fpts.forEach((a, i) => {
+      const b = fpts[(i + 1) % fpts.length]
+      const dx = b[0] - a[0]
+      const dy = b[1] - a[1]
+      const t = Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / (dx * dx + dy * dy || 1e-9)))
+      const d = Math.hypot(q[0] - (a[0] + dx * t), q[1] - (a[1] + dy * t))
+      if (d < best) {
+        best = d
+        at = i
+      }
+    })
+    setFrame([...fpts.slice(0, at + 1), q, ...fpts.slice(at + 1)], false)
+  }
+  const removePointT = (e, i) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (fpts.length > 3) setFrame(fpts.filter((_, j) => j !== i), false)
+  }
+
   return (
     <div className="xf-overlay mask-ov">
       {ask && <TrackDialog clip={clip} state={state} media={media} dispatch={dispatch} onClose={() => setAsk(false)} />}
+      {fixing && <TrackDialog fix startPts={fpts} clip={clip} state={state} media={media} dispatch={dispatch} onClose={() => setFixing(false)} />}
+      {tracked && (
+        <div className="mask-fixbar">
+          <span>{editable ? 'Fix this moment: drag the points or the shape. Then' : 'The subject is not in the picture here.'}</span>
+          {editable && <button className="mini" onClick={() => setFixing(true)}>Re-track from here</button>}
+        </div>
+      )}
       <svg width={BW} height={BH} viewBox={`0 0 ${BW} ${BH}`}>
-        <polygon points={outline.map((p) => p.join(',')).join(' ')} className="mask-line" onPointerDown={tracked ? undefined : dragBody} onDoubleClick={tracked ? undefined : addPoint} style={tracked ? { pointerEvents: 'none' } : { pointerEvents: 'all', cursor: 'move' }} />
+        <polygon points={outline.map((p) => p.join(',')).join(' ')} className="mask-line" onPointerDown={tracked ? (editable ? dragBodyT : undefined) : dragBody} onDoubleClick={tracked ? (editable ? addPointT : undefined) : addPoint} style={tracked && !editable ? { pointerEvents: 'none' } : { pointerEvents: 'all', cursor: 'move' }} />
         {rotPt && <line x1={(outline[0][0] + outline[1][0]) / 2} y1={(outline[0][1] + outline[1][1]) / 2} x2={rotPt[0]} y2={rotPt[1]} className="xf-line" />}
       </svg>
       <div className="xf-handle xf-rot" style={{ left: centre[0], top: centre[1], width: 8, height: 8, margin: '-4px 0 0 -4px', pointerEvents: 'none' }} />
-      {m.shape === 'poly' && !tracked && outline.map((p, i) => <div key={i} className="xf-handle xf-corner" style={{ left: p[0], top: p[1] }} onPointerDown={(e) => dragPoint(e, i)} onContextMenu={(e) => removePoint(e, i)} title="Drag to move this point. Right-click to remove it. Double-click the outline to add a point." />)}
+      {m.shape === 'poly' && (!tracked || editable) && outline.map((p, i) => (i % stride === 0 ? <div key={i} className="xf-handle xf-corner" style={{ left: p[0], top: p[1] }} onPointerDown={(e) => (tracked ? dragPointT(e, i) : dragPoint(e, i))} onContextMenu={(e) => (tracked ? removePointT(e, i) : removePoint(e, i))} title="Drag to move this point. Right-click to remove it. Double-click the outline to add a point." /> : null))}
       {handles.map((p, i) => <div key={i} className="xf-handle xf-corner" style={{ left: p[0], top: p[1] }} onPointerDown={dragCorner} title="Drag to resize the mask" />)}
       {rotPt && <div className="xf-handle xf-rot" style={{ left: rotPt[0], top: rotPt[1] }} onPointerDown={dragRotate} title="Turn the mask" />}
     </div>

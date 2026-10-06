@@ -4,11 +4,11 @@
 //   clip.mask = { shape: 'rect' | 'ellipse' | 'poly', cx, cy, w, h, rot, pts: [[x, y], ...], feather, expand, invert }
 
 export const MASK_DEFAULT = { shape: 'ellipse', cx: 0.5, cy: 0.5, w: 0.5, h: 0.6, rot: 0, pts: [], feather: 8, expand: 0, invert: false }
-export const MAX_POLY = 64
+export const MAX_POLY = 256 // points of a drawn or tracked shape (the shader reads them from a texture)
 // where a tracked subject is not in the picture: a tiny shape outside it, so the mask shows nothing
 const OFF_PICTURE = [[-2, -2], [-1.99, -2], [-2, -1.99]]
 
-const NONE = { mk: [0, 0, 0, 0], mb: [0, 0, 0, 0], mr: [1, 0], pts: new Float32Array((MAX_POLY + 1) * 2), n: 0 }
+const NONE = { mk: [0, 0, 0, 0], mb: [0, 0, 0, 0], mr: [1, 0], bb: [-10, -10, 10, 10], pts: new Float32Array((MAX_POLY + 1) * 4), n: 0 }
 
 // A mask can last only part of a clip: mask.from / mask.to are seconds of the ORIGINAL file (like keyframes).
 // Without them it lasts the whole clip. maskAt gives the mask that is active at source second ts (or undefined).
@@ -24,8 +24,8 @@ export const maskAt = (clip, ts) => {
   }
   return m
 }
-// the tracked look nearest to second ts of the file (frames are sorted by t)
-export function frameAt(frames, ts) {
+// the tracked look nearest to second ts of the file (frames are sorted by t): its place in the list
+export function frameIndexAt(frames, ts) {
   let lo = 0
   let hi = frames.length - 1
   while (lo < hi) {
@@ -34,8 +34,9 @@ export function frameAt(frames, ts) {
     else hi = mid
   }
   if (lo > 0 && Math.abs(frames[lo - 1].t - ts) <= Math.abs(frames[lo].t - ts)) lo--
-  return frames[lo]
+  return lo
 }
+export const frameAt = (frames, ts) => frames[frameIndexAt(frames, ts)]
 // the part of the clip (source seconds) the mask covers
 export const maskSpan = (clip) => {
   const m = clip.mask
@@ -66,20 +67,33 @@ export function maskUniforms(mask, tf) {
   const m = maskPlaced(mask, tf)
   const type = m.shape === 'rect' ? 1 : m.shape === 'ellipse' ? 2 : 3
   const rad = ((m.rot || 0) * Math.PI) / 180
-  const pts = new Float32Array((MAX_POLY + 1) * 2)
+  const pts = new Float32Array((MAX_POLY + 1) * 4) // one RGBA texel per point: x, y
   let n = 0
+  let bb = [-10, -10, 10, 10]
   if (type === 3) {
     n = Math.min(MAX_POLY, m.pts.length)
+    let x0 = 9
+    let y0 = 9
+    let x1 = -9
+    let y1 = -9
     for (let i = 0; i <= n; i++) {
       const p = m.pts[i % n]
-      pts[i * 2] = p[0]
-      pts[i * 2 + 1] = 1 - p[1]
+      pts[i * 4] = p[0]
+      pts[i * 4 + 1] = 1 - p[1]
+      x0 = Math.min(x0, p[0])
+      x1 = Math.max(x1, p[0])
+      y0 = Math.min(y0, 1 - p[1])
+      y1 = Math.max(y1, 1 - p[1])
     }
+    // the box around the shape with room for the soft edge and growing, so far-away pixels skip the edge loop
+    const pad = ((m.feather || 0) / 100) * 0.15 + Math.max(0, ((m.expand || 0) / 100) * 0.3) + 0.01
+    bb = [x0 - pad, y0 - pad, x1 + pad, y1 + pad]
   }
   return {
     mk: [type, ((m.feather || 0) / 100) * 0.15, m.invert ? 1 : 0, ((m.expand || 0) / 100) * 0.3],
     mb: [m.cx, 1 - m.cy, m.w / 2, m.h / 2],
     mr: [Math.cos(rad), Math.sin(rad)],
+    bb,
     pts,
     n,
   }

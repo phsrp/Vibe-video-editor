@@ -1,5 +1,5 @@
 import { TEXT_DEFAULTS } from './textRender.js'
-import { MASK_DEFAULT } from './masks.js'
+import { MASK_DEFAULT, frameIndexAt } from './masks.js'
 import { evalTransform, evalProp, evalWarp, hasTransform, keyAt, PROPS, DEFAULTS, DEFAULT_EASE, KEY_EPS, WARP_ZERO } from './motion.js'
 
 export const uid = () => Math.random().toString(36).slice(2, 9)
@@ -1002,6 +1002,17 @@ export function reducer(state, a) {
         return { ...c, anim, mask: { ...c.mask, from: a.from, to: a.to, frames: a.frames, pts: a.frames[0].pts } }
       }
       return commit(state, mapClips(state, f))
+    }
+    // correct one moment of a tracked mask: its outline at source second a.t becomes a.pts (live = while dragging)
+    case 'setMaskFrame': {
+      const f = (c) => {
+        if (c.id !== a.id || !c.mask || !c.mask.frames || !c.mask.frames.length) return c
+        const frames = c.mask.frames.slice()
+        const i = frameIndexAt(frames, a.t)
+        frames[i] = { ...frames[i], pts: a.pts }
+        return { ...c, mask: { ...c.mask, frames, pts: i === 0 ? a.pts : c.mask.pts } }
+      }
+      return a.live ? { ...state, ...mapClips(state, f) } : commit(state, mapClips(state, f))
     }
     case 'clearMask': {
       const f = (c) => {

@@ -1,4 +1,2 @@
-- BIG UPDATE: a new mask tracker that follows a subject's real outline, powered by SAM 2 on your graphics card
-- New: tracking follows an object as it turns, bends or changes shape (spinning pen, car, licence plate), copes with it leaving the picture and coming back, and has a 4-corner option for plates and screens
-- Smart select and tracking now need a graphics card (a one-time download of about 112 MB). Computers without one are told so, basic integrated graphics get a warning, and the old smaller AI model is removed
-- New: leave gaps on the main video track. Drag a clip sideways to open empty time before it; the preview and export show black there. Click a gap and press Delete (or its x) to close it
+- New: fix a bad moment in a tracked mask. Show the mask, go to that moment, drag its points, then press Re-track from here to track everything after it again
+- New: masks can now use up to 256 points (was 64) for finer edges, corners and thin tips

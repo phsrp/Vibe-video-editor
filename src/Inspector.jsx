@@ -226,7 +226,7 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
             <button className={'mini wide' + (mode === 'mask' ? ' on' : '')} onClick={() => setMode(mode === 'mask' ? 'transform' : 'mask')}>{mode === 'mask' ? 'Hide mask on preview' : 'Show mask on preview'}</button>
             <button className="mini wide" onClick={() => dispatch({ type: 'clearMask', id: clip.id })}>Remove mask</button>
           </div>
-          <div className="hint left">{mk.frames && mk.frames.length ? "This mask is tracked: it has its own outline for every moment of the video. Draw it again to change it." : "Drag inside the mask to move it. To make it follow the subject, draw the mask around it and choose Track."}</div>
+          <div className="hint left">{mk.frames && mk.frames.length ? "This mask is tracked: it has its own outline for every moment. To fix a bad moment, show the mask on the preview, go to that moment, drag its points (double-click the outline to add one, right-click to remove one), then press Re-track from here." : "Drag inside the mask to move it. To make it follow the subject, draw the mask around it and choose Track."}</div>
           {!clip.text && (
             <button className="mini wide" onClick={() => dispatch({ type: 'maskCopyAbove', id: clip.id })} title="Makes a copy of this clip on a new track at the top, with the same mask, so the subject shows in front of text on the tracks below">
               <Icon name="layers" size={13} /> Subject in front of text

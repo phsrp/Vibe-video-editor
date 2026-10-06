@@ -204,7 +204,7 @@ export function maskToPolygon(logits, size = 256) {
   const trace = outline(g, n, n)
   if (trace.length < 6) return []
   const norm = trace.map(([x, y]) => [(x + 0.5) / n, (y + 0.5) / n])
-  let tol = 0.0015
+  let tol = 0.0007
   let simp = simplify(norm, tol)
   while (simp.length > MAX_POLY && tol < 0.1) {
     tol *= 1.25

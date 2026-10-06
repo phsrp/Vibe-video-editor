@@ -428,6 +428,8 @@ input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var
 .mask-draw { pointer-events: auto; }
 .mask-draw svg { pointer-events: auto; }
 #mask-draw-line { fill: none; }
+.mask-fixbar { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; gap: 8px; align-items: center; justify-content: center; pointer-events: auto; z-index: 3; font-size: 12px; font-weight: 600; color: #fff; text-shadow: 0 1px 4px #000; }
+.mask-fixbar button { text-shadow: none; }
 .mask-draw-hint { position: absolute; left: 0; right: 0; top: 8px; text-align: center; pointer-events: none; font-weight: 700; color: #fff; text-shadow: 0 1px 4px #000; z-index: 2; }
 
 .aspect-select { margin-left: 8px; }

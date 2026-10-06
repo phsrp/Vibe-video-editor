@@ -1,4 +1,5 @@
 import { shaderTransform } from './motion.js'
+import { MAX_POLY } from './masks.js'
 
 // WebGL renderer. Draws one frame, or two frames blended by a gl-transitions shader.
 //
@@ -106,9 +107,10 @@ uniform vec4 mkA; uniform vec4 mkB;
 uniform vec4 mbA; uniform vec4 mbB;
 uniform vec2 mrA; uniform vec2 mrB;
 uniform float mnA; uniform float mnB;
-uniform vec2 mpA[65]; uniform vec2 mpB[65];
-struct Mk { vec4 k; vec4 b; vec2 r; float n; };
-float maskAlpha(vec2 q, Mk m, vec2 mp[65]) {
+uniform sampler2D mpA; uniform sampler2D mpB; // the points of a drawn shape, one per texel (x, y)
+uniform vec4 mbbA; uniform vec4 mbbB; // the box around a drawn shape, with room for its soft edge
+struct Mk { vec4 k; vec4 b; vec2 r; float n; vec4 bb; };
+float maskAlpha(vec2 q, Mk m, sampler2D mp) {
   if (m.k.x < 0.5) return 1.0;
   float feather = max(m.k.y, 0.0015);
   float sd;
@@ -123,10 +125,12 @@ float maskAlpha(vec2 q, Mk m, vec2 mp[65]) {
   } else {
     float inside = 0.0;
     float dmin = 1000.0;
-    for (int i = 0; i < 64; i++) {
+    // far from the shape: no need to look at its edges
+    if (q.x < m.bb.x || q.x > m.bb.z || q.y < m.bb.y || q.y > m.bb.w) dmin = 1.0;
+    else for (int i = 0; i < ${MAX_POLY}; i++) {
       if (float(i) >= m.n) break;
-      vec2 a = mp[i];
-      vec2 b = mp[i + 1];
+      vec2 a = texture2D(mp, vec2((float(i) + 0.5) / ${MAX_POLY + 1}.0, 0.5)).xy;
+      vec2 b = texture2D(mp, vec2((float(i) + 1.5) / ${MAX_POLY + 1}.0, 0.5)).xy;
       if (((a.y > q.y) != (b.y > q.y)) && (q.x < (b.x - a.x) * (q.y - a.y) / (b.y - a.y) + a.x)) inside = 1.0 - inside;
       vec2 pa = q - a;
       vec2 ba = b - a;
@@ -140,7 +144,7 @@ float maskAlpha(vec2 q, Mk m, vec2 mp[65]) {
   return m.k.z > 0.5 ? 1.0 - al : al;
 }
 // Result is premultiplied: transparent outside the picture, so layers can be stacked.
-vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, vec2 st, Fx fx, Mk mk, vec2 mp[65], mat3 h, float w, vec2 uv) {
+vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, vec2 st, Fx fx, Mk mk, sampler2D mp, mat3 h, float w, vec2 uv) {
   vec2 c = uv - 0.5;
   if (p.y > 0.5) {
     // inverse of: scale, rotate (clockwise), then move
@@ -171,8 +175,8 @@ vec4 sampleSrc(sampler2D t, vec2 s, vec4 tf, vec2 p, vec2 st, Fx fx, Mk mk, vec2
   tx.a *= maskAlpha(q, mk, mp);
   return vec4(tx.rgb * tx.a * p.x, tx.a * p.x);
 }
-vec4 getFromColor(vec2 uv) { return sampleSrc(from, sA, tfA, pA, stA, Fx(fA, c1A, c2A, kA, kcA, szA), Mk(mkA, mbA, mrA, mnA), mpA, hA, wA, uv); }
-vec4 getToColor(vec2 uv) { return sampleSrc(to, sB, tfB, pB, stB, Fx(fB, c1B, c2B, kB, kcB, szB), Mk(mkB, mbB, mrB, mnB), mpB, hB, wB, uv); }
+vec4 getFromColor(vec2 uv) { return sampleSrc(from, sA, tfA, pA, stA, Fx(fA, c1A, c2A, kA, kcA, szA), Mk(mkA, mbA, mrA, mnA, mbbA), mpA, hA, wA, uv); }
+vec4 getToColor(vec2 uv) { return sampleSrc(to, sB, tfB, pB, stB, Fx(fB, c1B, c2B, kB, kcB, szB), Mk(mkB, mbB, mrB, mnB, mbbB), mpB, hB, wB, uv); }
 `
 const SINGLE = `vec4 transition(vec2 uv) { return getFromColor(uv); }`
 const FADE = `vec4 transition(vec2 uv) { return mix(getFromColor(uv), getToColor(uv), progress); }`
@@ -213,6 +217,17 @@ export function createRenderer(canvas) {
   }
   const texA = makeTex(0)
   const texB = makeTex(1)
+  if (!gl.getExtension('OES_texture_float')) throw new Error('This graphics card cannot draw masks (no float textures)')
+  const makePolyTex = (unit) => {
+    const t = makeTex(unit)
+    gl.activeTexture(gl.TEXTURE0 + unit)
+    gl.bindTexture(gl.TEXTURE_2D, t)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+    return t
+  }
+  const polyA = makePolyTex(2)
+  const polyB = makePolyTex(3)
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
 
   // Returns {prog, loc, extras} or throws an Error with the compiler log.
@@ -236,7 +251,7 @@ export function createRenderer(canvas) {
     return {
       prog,
       extras,
-      loc: { from: u('from'), to: u('to'), progress: u('progress'), ratio: u('ratio'), sA: u('sA'), sB: u('sB'), tfA: u('tfA'), tfB: u('tfB'), pA: u('pA'), pB: u('pB'), stA: u('stA'), stB: u('stB'), hA: u('hA'), hB: u('hB'), wA: u('wA'), wB: u('wB'), fA: u('fA'), fB: u('fB'), c1A: u('c1A'), c1B: u('c1B'), c2A: u('c2A'), c2B: u('c2B'), kA: u('kA'), kB: u('kB'), kcA: u('kcA'), kcB: u('kcB'), szA: u('szA'), szB: u('szB'), mkA: u('mkA'), mkB: u('mkB'), mbA: u('mbA'), mbB: u('mbB'), mrA: u('mrA'), mrB: u('mrB'), mnA: u('mnA'), mnB: u('mnB'), mpA: u('mpA'), mpB: u('mpB') },
+      loc: { from: u('from'), to: u('to'), progress: u('progress'), ratio: u('ratio'), sA: u('sA'), sB: u('sB'), tfA: u('tfA'), tfB: u('tfB'), pA: u('pA'), pB: u('pB'), stA: u('stA'), stB: u('stB'), hA: u('hA'), hB: u('hB'), wA: u('wA'), wB: u('wB'), fA: u('fA'), fB: u('fB'), c1A: u('c1A'), c1B: u('c1B'), c2A: u('c2A'), c2B: u('c2B'), kA: u('kA'), kB: u('kB'), kcA: u('kcA'), kcB: u('kcB'), szA: u('szA'), szB: u('szB'), mkA: u('mkA'), mkB: u('mkB'), mbA: u('mbA'), mbB: u('mbB'), mrA: u('mrA'), mrB: u('mrB'), mnA: u('mnA'), mnB: u('mnB'), mpA: u('mpA'), mpB: u('mpB'), mbbA: u('mbbA'), mbbB: u('mbbB') },
     }
   }
 
@@ -287,7 +302,13 @@ export function createRenderer(canvas) {
       gl.uniform4f(p.loc['mb' + side], ...tt.mu.mb)
       gl.uniform2f(p.loc['mr' + side], ...tt.mu.mr)
       gl.uniform1f(p.loc['mn' + side], tt.mu.n)
-      gl.uniform2fv(p.loc['mp' + side], tt.mu.pts)
+      gl.uniform4f(p.loc['mbb' + side], ...tt.mu.bb)
+      // the points go to a small float texture of their own (unit 2 for A, 3 for B)
+      const unit = side === 'A' ? 2 : 3
+      gl.activeTexture(gl.TEXTURE0 + unit)
+      gl.bindTexture(gl.TEXTURE_2D, side === 'A' ? polyA : polyB)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, MAX_POLY + 1, 1, 0, gl.RGBA, gl.FLOAT, tt.mu.pts)
+      gl.uniform1i(p.loc['mp' + side], unit)
     }
     for (const e of p.extras) {
       const v = e.value
