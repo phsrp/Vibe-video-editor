@@ -1,2 +1,2 @@
-- New: fix a bad moment in a tracked mask. Show the mask, go to that moment, drag its points, then press Re-track from here to track everything after it again
-- New: masks can now use up to 256 points (was 64) for finer edges, corners and thin tips
+- Mask tracking now uses DAM4SAM's distractor-aware memory on top of SAM 2: it remembers extra reference frames when a lookalike is nearby, to help the mask stay on the right object and find it again after it hides
+- Changed: new text now has no fade in or out by default. The fade, pop, slide and typewriter options are all still there, and the ready-made looks keep theirs

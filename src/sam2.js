@@ -46,7 +46,8 @@ export async function loadSam2(paths) {
   const constants = await (await fetch(toUrl(paths.constants))).json()
   const sessions = {
     vision: await mk(paths.visionEncoder),
-    decoder: await mk(paths.maskDecoder),
+    // the decoder file is changed a little as it loads so that it also hands over its 3 other candidate masks (DAM4SAM)
+    decoder: await ort.InferenceSession.create(exposeCandidates(await get(paths.maskDecoder)), { executionProviders: eps }),
     memEnc: await mk(paths.memoryEncoder),
     memAtt: await mk(paths.memoryAttention),
     ptpos: await mk(paths.pointerTpos),
@@ -74,6 +75,9 @@ class Sam2 {
   reset() {
     this.cond = null // { index, tokens, pointer }: the first frame
     this.recent = [] // oldest first
+    this.drm = [] // frames kept for good because a lookalike was close (DAM4SAM's distractor-resolving memory)
+    this.sizes = [] // how many cells the object covered, frame by frame
+    this.lastAdded = -1 // the frame most recently added to drm
   }
 
   T(type, data, dims) {
@@ -142,6 +146,7 @@ class Sam2 {
       this.recent.push(entry)
       while (this.recent.length > MAXP - 1) this.recent.shift()
     }
+    return entry
   }
 
   // The first frame: the object marked by `points` ([{x, y, label}] in 0..1, label 1 = object, 0 = not, 2 / 3 = top-left /
@@ -158,24 +163,43 @@ class Sam2 {
   }
 
   // Finds the object in the next picture. `index` counts the pictures from the first (1, 2, 3 ...).
+  // Memory follows DAM4SAM (Videnovic et al., Apache-2.0): the first frame plus frames saved because a lookalike was
+  // near ("distractor-resolving memory", up to 4), then the most recent frames in which the object was visible.
   async track(el, w, h, index, totalFrames) {
     if (!this.cond) throw new Error('seed first')
     const v = await this.encode(el, w, h)
     const feats = toTokens(await v.feats2.getData())
-    // the memory: the first frame, then the newest frames first (missing slots repeat the newest), then the pointers
-    const newest = [...this.recent].reverse()
+    const dam = !window.__damOff
+    // which frames the long-term part of the memory uses for this frame
+    let fixed = [this.cond]
+    if (dam && this.drm.length) {
+      const all = [this.cond, ...this.drm]
+      const sel = []
+      const before = all.filter((e) => e.index < index - 1).sort((a, b) => b.index - a.index)[0]
+      if (before) sel.push(before)
+      if (!sel.includes(this.cond)) sel.push(this.cond)
+      const rest = all.filter((e) => !sel.includes(e) && e.index !== index - 1).sort((a, b) => Math.abs(a.index - index) - Math.abs(b.index - index))
+      sel.push(...rest.slice(0, Math.max(0, 4 - sel.length)))
+      fixed = sel.sort((a, b) => a.index - b.index)
+    }
+    // the recent frames (newest first), not counting the ones already used above
+    const newest = [...this.recent].reverse().filter((e) => !fixed.includes(e))
     const memory = new Float32Array(R * MEM)
     const memoryPos = new Float32Array(R * MEM)
-    const blocks = [{ e: this.cond, pos: this.slotPos[FRAMES - 1] }]
-    for (let slot = 1; slot < FRAMES; slot++) {
-      const e = newest[slot - 1]
-      blocks.push(e ? { e, pos: this.slotPos[slot - 1] } : blocks[1] || blocks[0])
+    // blocks: the long-term frames (the last temporal row), then the recent ones with rows 0, 1, 2 ... (missing ones repeat the newest)
+    const blocks = fixed.map((e) => ({ e, pos: this.slotPos[FRAMES - 1] }))
+    const nRecent = FRAMES - blocks.length
+    for (let k = 0; k < nRecent; k++) {
+      const e = newest[k]
+      const fallback = blocks[fixed.length] || blocks[fixed.length - 1]
+      blocks.push(e ? { e, pos: this.slotPos[k] } : fallback)
     }
-    blocks.forEach((b, slot) => {
+    blocks.slice(0, FRAMES).forEach((b, slot) => {
       memory.set(b.e.tokens, slot * FT * MEM)
       memoryPos.set(b.pos, slot * FT * MEM)
     })
-    const ptrs = [this.cond, ...newest].slice(0, MAXP)
+    // object pointers: the long-term frames, then the recent frames, 16 at most
+    const ptrs = [...fixed, ...newest.filter((e) => index - e.index < MAXP)].slice(0, MAXP)
     while (ptrs.length < MAXP) ptrs.push(ptrs[ptrs.length - 1])
     ptrs.forEach((e, i) => memory.set(e.pointer, FRAMES * FT * MEM + i * HIDDEN))
     const span = Math.max(1, Math.min(totalFrames, MAXP) - 1)
@@ -192,10 +216,190 @@ class Sam2 {
     })
     const dec = await this.decode(v, att.conditioned_feats, [0, 0], [-1])
     const mask = await this.unpack(dec)
-    if (mask.score > 0 && mask.iou >= RELIABLE_IOU) await this.remember(v, dec, index, false)
+    let entry = null
+    if (mask.score > 0 && mask.iou >= RELIABLE_IOU) entry = await this.remember(v, dec, index, false)
+    if (dam) await this.watchForDistractors(dec, mask, index, entry)
     if (mask.iou < PLAUSIBLE_IOU) mask.logits.fill(-GIVEN_LOGIT)
     return mask
   }
+
+  // DAM4SAM's distractor check: when the model is sure of its mask and the object's size is steady, look at the other
+  // candidate masks. If one of them reaches somewhere else (its box differs from the chosen mask's box), something similar
+  // is nearby, and this frame is kept for good so later frames can tell the object from it.
+  async watchForDistractors(dec, mask, index, entry) {
+    let n = 0
+    for (let i = 0; i < mask.logits.length; i++) if (mask.logits[i] > 0) n++
+    this.sizes.push(n)
+    if (!entry || n < 1) return
+    const sizes = this.sizes.slice(-300).filter((x) => x >= 1).slice(-10)
+    const med = [...sizes].sort((a, b) => a - b)[Math.floor(sizes.length / 2)]
+    const ratio = this.sizes.length > 1 && med ? n / med : -1
+    if (!(mask.iou > 0.8 && ratio >= 0.8 && ratio <= 1.2 && (this.lastAdded < 0 || index - this.lastAdded > 5))) return
+    const cand = await dec.alt_masks.getData() // [4, 256, 256]: the single-mask output, then the 3 candidates
+    const N = MASK * MASK
+    // which candidate is the chosen one
+    let chosen = 1
+    let best = Infinity
+    for (let j = 1; j < 4; j++) {
+      let d = 0
+      for (let i = 0; i < N; i += 7) d += Math.abs(cand[j * N + i] - mask.logits[i])
+      if (d < best) {
+        best = d
+        chosen = j
+      }
+    }
+    const inMask = new Uint8Array(N)
+    for (let i = 0; i < N; i++) inMask[i] = mask.logits[i] > 0 ? 1 : 0
+    const box = boxOf(inMask)
+    let min = 1
+    let any = false
+    for (let j = 1; j < 4; j++) {
+      if (j === chosen) continue
+      const other = new Uint8Array(N)
+      let cnt = 0
+      for (let i = 0; i < N; i++) {
+        if (cand[j * N + i] > 0 && !inMask[i]) {
+          other[i] = 1
+          cnt++
+        }
+      }
+      if (cnt < 1) continue
+      const part = largestPart(other) // the biggest blob outside the chosen mask
+      for (let i = 0; i < N; i++) if (inMask[i]) part[i] = 1
+      any = true
+      min = Math.min(min, boxIou(box, boxOf(part)))
+    }
+    if (any && min <= 0.7) {
+      this.drm.push(entry)
+      this.lastAdded = index
+    }
+  }
+}
+
+// ---- helpers for the distractor check (256 x 256 masks) ----
+function boxOf(m) {
+  let x0 = MASK
+  let y0 = MASK
+  let x1 = -1
+  let y1 = -1
+  for (let y = 0; y < MASK; y++) {
+    for (let x = 0; x < MASK; x++) {
+      if (!m[y * MASK + x]) continue
+      if (x < x0) x0 = x
+      if (x > x1) x1 = x
+      if (y < y0) y0 = y
+      if (y > y1) y1 = y
+    }
+  }
+  return [x0, y0, x1, y1]
+}
+function boxIou(a, b) {
+  const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]) + 1)
+  const iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]) + 1)
+  const inter = ix * iy
+  const area = (r) => Math.max(0, r[2] - r[0] + 1) * Math.max(0, r[3] - r[1] + 1)
+  const u = area(a) + area(b) - inter
+  return u > 0 ? inter / u : 0
+}
+// only the biggest connected blob of a mask
+function largestPart(m) {
+  const lab = new Int32Array(MASK * MASK)
+  let best = 0
+  let bestSize = 0
+  let next = 1
+  const stack = []
+  const push = (j) => {
+    lab[j] = next
+    stack.push(j)
+  }
+  for (let s = 0; s < m.length; s++) {
+    if (!m[s] || lab[s]) continue
+    let size = 0
+    push(s)
+    while (stack.length) {
+      const i = stack.pop()
+      size++
+      const x = i % MASK
+      const y = (i / MASK) | 0
+      if (x > 0 && m[i - 1] && !lab[i - 1]) push(i - 1)
+      if (x < MASK - 1 && m[i + 1] && !lab[i + 1]) push(i + 1)
+      if (y > 0 && m[i - MASK] && !lab[i - MASK]) push(i - MASK)
+      if (y < MASK - 1 && m[i + MASK] && !lab[i + MASK]) push(i + MASK)
+    }
+    if (size > bestSize) {
+      bestSize = size
+      best = next
+    }
+    next++
+  }
+  const out = new Uint8Array(MASK * MASK)
+  for (let i = 0; i < out.length; i++) if (lab[i] === best) out[i] = 1
+  return out
+}
+
+// ---- a small change to the decoder model file, made as it loads ----
+// The decoder works out 3 candidate masks and keeps the best. This adds two outputs ("alt_masks": all 4 masks, "alt_ious":
+// their 4 quality estimates) by editing the ONNX file's bytes: two Cast nodes and two outputs are appended to its graph.
+function exposeCandidates(buf) {
+  const bytes = new Uint8Array(buf)
+  const enc = new TextEncoder()
+  const varint = (n) => {
+    const o = []
+    while (n >= 128) {
+      o.push((n % 128) | 128)
+      n = Math.floor(n / 128)
+    }
+    o.push(n)
+    return o
+  }
+  const str = (f, s) => {
+    const b = enc.encode(s)
+    return [...varint((f << 3) | 2), ...varint(b.length), ...b]
+  }
+  const int = (f, v) => [...varint(f << 3), ...varint(v)] // (field 20, the type, needs a two-byte tag)
+  const msg = (f, b) => [...varint((f << 3) | 2), ...varint(b.length), ...b]
+  const cast = (input, output) => msg(1, [...str(1, input), ...str(2, output), ...str(3, 'alt_cast_' + output), ...str(4, 'Cast'), ...msg(5, [...str(1, 'to'), ...int(3, 1), ...int(20, 2)])])
+  const out = (name) => msg(12, [...str(1, name), ...msg(2, msg(1, int(1, 1)))])
+  const added = Uint8Array.from([...cast('/Gather_9_output_0', 'alt_masks'), ...cast('/Gather_7_output_0', 'alt_ious'), ...out('alt_masks'), ...out('alt_ious')])
+  // find the graph (field 7) in the model's top level
+  let p = 0
+  const readVar = () => {
+    let r = 0
+    let mul = 1
+    for (;;) {
+      const b = bytes[p++]
+      r += (b & 127) * mul
+      if (b < 128) return r
+      mul *= 128
+    }
+  }
+  while (p < bytes.length) {
+    const start = p
+    const tag = readVar()
+    const wt = tag & 7
+    if (wt === 0) readVar()
+    else if (wt === 1) p += 8
+    else if (wt === 5) p += 4
+    else if (wt === 2) {
+      const len = readVar()
+      const bodyStart = p
+      p += len
+      if (tag >> 3 === 7) {
+        const head = bytes.subarray(0, start)
+        const body = bytes.subarray(bodyStart, bodyStart + len)
+        const tail = bytes.subarray(p)
+        const newTag = Uint8Array.from([(7 << 3) | 2, ...varint(len + added.length)])
+        const res = new Uint8Array(head.length + newTag.length + body.length + added.length + tail.length)
+        let o = 0
+        for (const part of [head, newTag, body, added, tail]) {
+          res.set(part, o)
+          o += part.length
+        }
+        return res
+      }
+    } else throw new Error('Unknown model file layout')
+  }
+  throw new Error('The decoder model has no graph')
 }
 
 // [1, C, H, W] channels -> the [H*W, 1, C] tokens memory attention reads

@@ -22,8 +22,8 @@ export const TEXT_DEFAULTS = {
   outline: { on: false, color: '#000000', width: 6 },
   shadow: { on: true, color: '#000000', blur: 10 },
   bg: { on: false, color: '#000000', opacity: 60 },
-  animIn: 'fade',
-  animOut: 'fade',
+  animIn: 'none',
+  animOut: 'none',
   animDur: 0.4,
 }
 
