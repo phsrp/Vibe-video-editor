@@ -23,6 +23,18 @@ A Windows video editor and image editor focused on simplicity with many features
 
 </div>
 
+<div align="center">
+
+## Tutorial included, don't worry
+
+*(for new users: there is an included tutorial, do not worry)*
+
+The first time you open the video editor or the image editor, a short tour shows you the key features, one step at a time. You can skip it, and replay it any time with the **Tutorial** button at the top.
+
+<img src="docs/screenshots/tutorial-video.png" alt="The tutorial in the video editor, explaining Transform and Funny warp" width="48%"> <img src="docs/screenshots/tutorial-image.png" alt="The tutorial in the image editor, explaining Transform and Funny warp" width="48%">
+
+</div>
+
 ## Built with
 
 - [Electron](https://www.electronjs.org/) and [React](https://react.dev/), with WebGL for the preview and transitions
