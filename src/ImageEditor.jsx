@@ -38,7 +38,7 @@ export default function ImageEditor({ tabId, active, initial, binds, onMeta, onN
   const [tool, setToolState] = useState('move')
   const [mode, setMode] = useState('transform')
   const [freeMode, setFreeMode] = useState(false)
-  const [brush, setBrush] = useState({ color: '#e0def4', size: 24, opacity: 1, hardness: 0.8, fill: false })
+  const [brush, setBrush] = useState({ color: '#000000', size: 24, opacity: 1, hardness: 0.8, fill: false })
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [showExport, setShowExport] = useState(false)
@@ -191,7 +191,9 @@ export default function ImageEditor({ tabId, active, initial, binds, onMeta, onN
     const onKey = (e) => {
       if (!activeRef.current) return
       const tag = e.target.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      // sliders, colour boxes and tick boxes keep the focus after a click: shortcuts must still work then
+      const typing = tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && !['range', 'checkbox', 'color', 'radio', 'button'].includes(e.target.type))
+      if (typing) return
       const action = actionFor(binds, e)
       const h = {
         save: () => saveProject(false),

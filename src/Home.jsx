@@ -48,13 +48,13 @@ export default function Home({ active, onNew, onOpen, onOpenRecent }) {
           <button className="big" onClick={onOpen}>
             <Icon name="folder" size={16} /> Open project…
           </button>
-          <button className="big" onClick={() => window.api.openProjectsFolder()} title="Where your projects are saved by default (Documents > Vibe Video Editor Projects)">
+          <button className="big" onClick={() => window.api.openProjectsFolder()} title="Where your projects are saved by default (Documents > Vibe Editing Suite Projects)">
             <Icon name="folder" size={16} /> Projects folder
           </button>
         </div>
 
         <h2>Recent projects</h2>
-        {recents && recents.length === 0 && <div className="hint left home-empty">Nothing here yet. Projects you save or open will show up here. New projects are saved in your Documents folder, in Vibe Video Editor Projects.</div>}
+        {recents && recents.length === 0 && <div className="hint left home-empty">Nothing here yet. Projects you save or open will show up here. New projects are saved in your Documents folder, in Vibe Editing Suite Projects.</div>}
         <div className="cards">
           {(recents || []).map((r) => (
             <div key={r.path} className="card" onClick={() => onOpenRecent(r)} title={r.path}>

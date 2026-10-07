@@ -282,7 +282,9 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     const onKey = (e) => {
       if (!activeRef.current) return
       const tag = e.target.tagName
-      if (showKeys || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      // sliders, colour boxes and tick boxes keep the focus after a click: shortcuts must still work then
+      const typing = tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && !['range', 'checkbox', 'color', 'radio', 'button'].includes(e.target.type))
+      if (showKeys || typing) return
       const action = actionFor(binds, e)
       if (!action) return
       e.preventDefault()
@@ -379,7 +381,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
           dispatch({ type: 'renameRow', key: 'a:' + tid, name: 'Voice-over' })
         }
         dispatch({ type: 'addAudioClip', mediaId: item.id, trackId: tid, start: startAt })
-        flash('Voice-over added. It is saved in Documents > Vibe Video Editor Projects > Voice-overs.')
+        flash('Voice-over added. It is saved in Documents > Vibe Editing Suite Projects > Voice-overs.')
       } catch {
         flash('The recording could not be saved.')
       }

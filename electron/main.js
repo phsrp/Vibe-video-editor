@@ -317,9 +317,35 @@ function createWindow() {
 // ---- projects (.json files) and autosave
 const autosavePath = () => path.join(app.getPath('userData'), 'autosave.json')
 
-// Where projects are saved unless you pick somewhere else: Documents > Vibe Video Editor Projects
+// The Documents folders were called "Vibe Video Editor ..." before the rename. Rename them once, in place.
+// If that is not possible (folder open somewhere, new one already exists) the old folder keeps being used.
+const FOLDER_RENAMES = [
+  ['Vibe Video Editor Projects', 'Vibe Editing Suite Projects'],
+  ['Vibe Video Editor Library', 'Vibe Editing Suite Library'],
+]
+const folderRenamed = new Set()
+const docFolder = (idx) => {
+  const [oldName, newName] = FOLDER_RENAMES[idx]
+  const docs = app.getPath('documents')
+  const oldP = path.join(docs, oldName)
+  const newP = path.join(docs, newName)
+  if (!folderRenamed.has(idx) && fs.existsSync(oldP) && !fs.existsSync(newP)) {
+    try {
+      fs.renameSync(oldP, newP)
+      folderRenamed.add(idx)
+    } catch {
+      return oldP
+    }
+  }
+  return fs.existsSync(oldP) && !fs.existsSync(newP) ? oldP : newP
+}
+// project files and recent lists remember full paths: point them at the renamed folders
+const fixOldPaths = (text) =>
+  FOLDER_RENAMES.reduce((t, [o, n], i) => (path.basename(docFolder(i)) === n ? t.split(o).join(n) : t), text)
+
+// Where projects are saved unless you pick somewhere else: Documents > Vibe Editing Suite Projects
 const projectsDir = () => {
-  const d = path.join(app.getPath('documents'), 'Vibe Video Editor Projects')
+  const d = docFolder(0)
   try {
     fs.mkdirSync(d, { recursive: true })
   } catch {}
@@ -328,9 +354,9 @@ const projectsDir = () => {
 ipcMain.handle('projects:folder', () => shell.openPath(projectsDir()))
 
 // The library: videos, images and sounds you use again and again (an intro, a logo, music, sound effects).
-// They live in Documents > Vibe Video Editor Library and show up in the Library panel of the editor.
+// They live in Documents > Vibe Editing Suite Library and show up in the Library panel of the editor.
 const libraryDir = () => {
-  const d = path.join(app.getPath('documents'), 'Vibe Video Editor Library')
+  const d = docFolder(1)
   try {
     fs.mkdirSync(d, { recursive: true })
   } catch {}
@@ -454,7 +480,7 @@ ipcMain.handle('project:listAutosaves', () =>
   fs
     .readdirSync(autosaveDir())
     .filter((f) => f.endsWith('.json'))
-    .map((f) => ({ id: f.slice(0, -5), json: fs.readFileSync(path.join(autosaveDir(), f), 'utf8') }))
+    .map((f) => ({ id: f.slice(0, -5), json: fixOldPaths(fs.readFileSync(path.join(autosaveDir(), f), 'utf8')) }))
 )
 ipcMain.handle('project:clearAutosave', (_e, id) => {
   try {
@@ -462,13 +488,13 @@ ipcMain.handle('project:clearAutosave', (_e, id) => {
     else for (const f of fs.readdirSync(autosaveDir())) fs.unlinkSync(path.join(autosaveDir(), f))
   } catch {}
 })
-ipcMain.handle('project:read', (_e, file) => ({ file, json: fs.readFileSync(file, 'utf8') }))
+ipcMain.handle('project:read', (_e, file) => ({ file, json: fixOldPaths(fs.readFileSync(file, 'utf8')) }))
 
 // ---- recent projects (shown on the Home page)
 const recentPath = () => path.join(app.getPath('userData'), 'recent.json')
 const readRecent = () => {
   try {
-    return JSON.parse(fs.readFileSync(recentPath(), 'utf8'))
+    return JSON.parse(fixOldPaths(fs.readFileSync(recentPath(), 'utf8')))
   } catch {
     return []
   }
@@ -749,7 +775,7 @@ app.whenReady().then(() => {
 })
 
 // A finished voice-over: the recording (webm) is turned into an .m4a (so it has a proper length) and kept in
-// Documents > Vibe Video Editor Projects > Voice-overs
+// Documents > Vibe Editing Suite Projects > Voice-overs
 ipcMain.handle('voice:save', async (_e, { data }) => {
   const dir = path.join(projectsDir(), 'Voice-overs')
   fs.mkdirSync(dir, { recursive: true })
