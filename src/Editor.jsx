@@ -9,6 +9,8 @@ import LibraryPanel from './LibraryPanel.jsx'
 import Icon from './Icon.jsx'
 import { serialize, restore } from './project.js'
 import { actionFor } from './keybinds.js'
+import Tour, { tourSeen, markTourSeen } from './Tour.jsx'
+import { VIDEO_STEPS } from './tourSteps.js'
 
 // One open project. Several of these can exist at once (one per tab); only the active one is shown
 // and reacts to the keyboard, the others keep their state and wait.
@@ -407,8 +409,28 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     else dispatch({ type: 'addClip', mediaId: m.id })
   }
 
+  // the tutorial: shown by itself the first time the video editor is opened, and again from the Tutorial button
+  const appRef = useRef(null)
+  const [tour, setTour] = useState(false)
+  useEffect(() => {
+    if (!active || tourSeen('video')) return
+    let dead = false
+    const t = setTimeout(async () => {
+      if (dead || (await window.api.isTest())) return
+      setTour(true)
+    }, 900)
+    return () => {
+      dead = true
+      clearTimeout(t)
+    }
+  }, [active])
+  const closeTour = () => {
+    markTourSeen('video')
+    setTour(false)
+  }
+
   return (
-    <div className="app" style={{ display: active ? undefined : 'none' }} onDragOver={(e) => e.preventDefault()} onDrop={onDropFiles}>
+    <div className="app" ref={appRef} style={{ display: active ? undefined : 'none' }} onDragOver={(e) => e.preventDefault()} onDrop={onDropFiles}>
       <header className="topbar">
         <button onClick={onNew} title="Start another project in a new tab">New</button>
         <button onClick={onOpen} title="Open a project in a new tab">Open…</button>
@@ -422,6 +444,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
           ))}
         </select>
         <span className="spacer" />
+        <button onClick={() => setTour(true)} title="A short tour of the main features"><Icon name="help" size={14} /> Tutorial</button>
         <button className="primary" onClick={() => onExport()} disabled={!state.clips.length && !state.overlayClips.length}>
           <Icon name="upload" /> Export video…
         </button>
@@ -546,6 +569,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         onOpenJson(json)
       }} />}
       {showKeys && <KeybindDialog binds={binds} setBinds={setBinds} onClose={() => setShowKeys(false)} />}
+      {tour && active && <Tour steps={VIDEO_STEPS} rootRef={appRef} onClose={closeTour} />}
     </div>
   )
 }

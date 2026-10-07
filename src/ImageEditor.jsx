@@ -7,6 +7,8 @@ import Icon from './Icon.jsx'
 import { serializeImage, restoreImage } from './project.js'
 import { exportImage } from './imageRender.js'
 import { actionFor } from './keybinds.js'
+import Tour, { tourSeen, markTourSeen } from './Tour.jsx'
+import { IMAGE_STEPS } from './tourSteps.js'
 
 const TOOLS = [
   { id: 'move', icon: 'move', label: 'Move and transform (V)', key: 'V' },
@@ -228,8 +230,28 @@ export default function ImageEditor({ tabId, active, initial, binds, onMeta, onN
 
   const sizeLabel = `${state.canvas.w} × ${state.canvas.h}`
 
+  // the tutorial: shown by itself the first time the image editor is opened, and again from the Tutorial button
+  const appRef = useRef(null)
+  const [tour, setTour] = useState(false)
+  useEffect(() => {
+    if (!active || tourSeen('image')) return
+    let dead = false
+    const t = setTimeout(async () => {
+      if (dead || (await window.api.isTest())) return
+      setTour(true)
+    }, 900)
+    return () => {
+      dead = true
+      clearTimeout(t)
+    }
+  }, [active])
+  const closeTour = () => {
+    markTourSeen('image')
+    setTour(false)
+  }
+
   return (
-    <div className="app" style={{ display: active ? undefined : 'none' }} onDragOver={(e) => e.preventDefault()} onDrop={onDropFiles}>
+    <div className="app" ref={appRef} style={{ display: active ? undefined : 'none' }} onDragOver={(e) => e.preventDefault()} onDrop={onDropFiles}>
       <header className="topbar">
         <button onClick={onNew} title="Start another project in a new tab">New</button>
         <button onClick={onOpen} title="Open a project in a new tab">Open…</button>
@@ -240,6 +262,7 @@ export default function ImageEditor({ tabId, active, initial, binds, onMeta, onN
         <span className="proj-name">{projectName}{dirty ? ' •' : ''}</span>
         <span className="canvas-size" title="The size of the canvas, in pixels">{sizeLabel}</span>
         <span className="spacer" />
+        <button onClick={() => setTour(true)} title="A short tour of the main features"><Icon name="help" size={14} /> Tutorial</button>
         <button className="primary" onClick={() => setShowExport(true)} disabled={!state.overlayClips.length}>
           <Icon name="upload" /> Export picture…
         </button>
@@ -262,6 +285,7 @@ export default function ImageEditor({ tabId, active, initial, binds, onMeta, onN
         </main>
         <ImageInspector state={state} dispatch={dispatch} mode={mode} setMode={setMode} freeMode={freeMode} setFreeMode={setFreeMode} tool={tool} brush={brush} setBrush={setBrush} open={inspOpen} setOpen={setInspOpen} />
       </div>
+      {tour && active && <Tour steps={IMAGE_STEPS} rootRef={appRef} onClose={closeTour} />}
       {showExport && <ExportPictureDialog state={state} name={projectName === 'Untitled' ? 'My picture' : projectName} onClose={() => setShowExport(false)} flash={flash} />}
     </div>
   )

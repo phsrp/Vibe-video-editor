@@ -481,3 +481,15 @@ input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var
 .card-badge.image { background: color-mix(in srgb, var(--accent2) 70%, #000); }
 .lock-fs { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .lock-fs:disabled { opacity: .6; }
+
+/* ---- first-run tutorial ---- */
+.tour { position: fixed; inset: 0; z-index: 900; }
+.tour-bg { position: absolute; inset: 0; }
+.tour-bg.dim { background: rgba(0, 0, 0, .62); }
+.tour-hole { position: absolute; border-radius: 10px; border: 2px solid var(--accent); box-shadow: 0 0 0 9999px rgba(0, 0, 0, .62); pointer-events: none; transition: left .2s, top .2s, width .2s, height .2s; }
+.tour-card { position: absolute; background: var(--panel); border: 1px solid var(--accent); border-radius: 10px; padding: 14px 16px 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, .5); transition: opacity .15s; }
+.tour-card h4 { margin: 0 0 6px; font-size: 15px; }
+.tour-card p { margin: 0 0 12px; color: var(--text); line-height: 1.5; }
+.tour-count { float: right; color: var(--dim); font-size: 11px; }
+.tour-actions { display: flex; justify-content: space-between; align-items: center; }
+.tour-nav { display: flex; gap: 6px; }

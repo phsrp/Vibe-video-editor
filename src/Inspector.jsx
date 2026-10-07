@@ -329,7 +329,7 @@ function Section({ id, title, children }) {
     } catch {}
   }
   return (
-    <div className={'insp-sect' + (open ? ' open' : '')}>
+    <div className={'insp-sect' + (open ? ' open' : '')} data-sec={id}>
       <button className="sect-head" onClick={toggle} title={open ? 'Fold this section away' : 'Open this section'}>
         <Icon name="right" size={12} />
         <span>{title}</span>
