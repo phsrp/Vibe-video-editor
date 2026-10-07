@@ -20,6 +20,7 @@ export default function ImagePreview({ state, dispatch, mode, setMode, freeMode,
   const zoomRef = useRef(1)
   const [fitBox, setFitBox] = useState({ w: 640, h: 360 })
   const [tick, setTick] = useState(0) // bumps when a picture finishes loading
+  const [hover, setHover] = useState(null) // where the pointer is over the picture (for the brush circle)
   const [live, setLive] = useState(null) // {id, stroke}: a brush stroke being drawn
   const cap = Math.min(1, 4096 / Math.max(state.canvas.w, state.canvas.h))
   const cw = Math.max(1, Math.round(state.canvas.w * cap))
@@ -166,6 +167,10 @@ export default function ImagePreview({ state, dispatch, mode, setMode, freeMode,
     setBrush({ ...brush, color: hex })
   }
 
+  // brush / eraser: the pointer is hidden and a circle of the brush size follows it (size is in canvas pixels, scaled by the layer)
+  const round = tool === 'brush' || tool === 'eraser'
+  const layerScale = layer && layer.paint ? evalTransform(layer, 0).scale / 100 : 1
+  const ringR = (brush.size * (box.w / state.canvas.w) * layerScale) / 2
   const lockedLayer = !!layer && isLocked(state, layer.id) // a locked layer cannot be changed
   const maskMode = mode === 'mask' || mode === 'maskdraw' || mode === 'maskpoly' || mode === 'maskdrawsmart'
   const getFrame = (id) => {
@@ -188,7 +193,21 @@ export default function ImagePreview({ state, dispatch, mode, setMode, freeMode,
           {(painting || tool === 'eyedropper') && (
             <div className="xf-overlay paint-ov">
               <svg width={box.w} height={box.h} viewBox={`0 0 ${box.w} ${box.h}`}>
-                <rect width={box.w} height={box.h} fill="transparent" style={{ pointerEvents: 'all', cursor: 'crosshair' }} onPointerDown={startPaint} />
+                <rect
+                  width={box.w}
+                  height={box.h}
+                  fill="transparent"
+                  style={{ pointerEvents: 'all', cursor: round ? 'none' : 'crosshair' }}
+                  onPointerDown={startPaint}
+                  onPointerMove={(e) => round && setHover(pointer(e))}
+                  onPointerLeave={() => setHover(null)}
+                />
+                {round && hover && (
+                  <g style={{ pointerEvents: 'none' }}>
+                    <circle cx={hover[0]} cy={hover[1]} r={Math.max(1.5, ringR)} fill="none" stroke="#fff" strokeWidth="2.5" opacity="0.9" />
+                    <circle cx={hover[0]} cy={hover[1]} r={Math.max(1.5, ringR)} fill="none" stroke="#000" strokeWidth="1" />
+                  </g>
+                )}
               </svg>
             </div>
           )}
