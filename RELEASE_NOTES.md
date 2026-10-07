@@ -1,2 +1,1 @@
-- New: a short first-time tutorial for the video editor and the image editor. It shows the key features one step at a time, and you can replay it any time with the Tutorial button at the top
-- README has a tutorial section with screenshots
+- Fixed: exporting a project with very many clips failed with an ENAMETOOLONG error. Exports now work however long the project is
