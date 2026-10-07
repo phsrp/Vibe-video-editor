@@ -1,27 +1,27 @@
-<p align="center">
-  <img src="docs/banner.png" alt="Completely made with AI: Vibe Editing Suite was designed, written, tested and packaged by Claude (Anthropic) from plain-English instructions." width="100%">
-</p>
+<div align="center">
 
-<h1 align="center">Vibe Editing Suite</h1>
+<img src="docs/banner.png" alt="Completely made with AI: Vibe Editing Suite was designed, written, tested and packaged by Claude (Anthropic) from plain-English instructions." width="100%">
 
-<p align="center">
-  A Windows video editor and image editor with goofy PowerPoint-style transitions, keyframes, multi-track audio, layers, AI masks and 4K export.<br>
-  <b>Every line of it was written by AI.</b>
-</p>
+</div>
 
-<p align="center">
-  <a href="https://github.com/phsrp/Vibe-editing-suite/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/phsrp/Vibe-editing-suite?label=download&color=c4a7e7&style=for-the-badge"></a>
-  <img alt="Made with AI" src="https://img.shields.io/badge/made%20with-AI-ebbcba?style=for-the-badge">
-  <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-31748f?style=for-the-badge">
-</p>
+<div align="center">
 
----
+# Vibe Editing Suite
 
-# ⚠️ THE README IS A WORK IN PROGRESS ⚠️
+</div>
 
-# Made with AI. More to come.
+<div align="center">
 
----
+A Windows video editor and image editor focused on simplicity with many features content creators need  
+**Every line of it was written by AI.**
+
+</div>
+
+<div align="center">
+
+[![Download](https://img.shields.io/github/v/release/phsrp/Vibe-editing-suite?label=download&color=c4a7e7&style=for-the-badge)](https://github.com/phsrp/Vibe-editing-suite/releases/latest) ![Made with AI](https://img.shields.io/badge/made%20with-AI-ebbcba?style=for-the-badge) ![Windows](https://img.shields.io/badge/platform-Windows-31748f?style=for-the-badge)
+
+</div>
 
 ## Built with
 
