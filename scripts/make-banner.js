@@ -25,7 +25,7 @@ h1 { font-weight: 900; font-size: 150px; line-height: 1.02; letter-spacing: -.02
 </style></head><body>
 <div class="glow g1"></div><div class="glow g2"></div><div class="glow g3"></div>
 <div class="wrap">
-  <div class="pill">vIBE EDITING SUITE</div>
+  <div class="pill">VIBE EDITING SUITE</div>
   <h1>Completely made<br>with AI</h1>
   <div class="sub">Designed, written, tested and packaged by <b>Claude</b> (Anthropic) from plain-English instructions.<br>No human wrote a line of this code.</div>
 </div>
