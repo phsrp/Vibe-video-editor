@@ -1,5 +1,4 @@
-- BIG UPDATE: the editor is now Vibe Editing Suite, a video editor and an image editor in one
-- New: image projects. Pick Video or Image when you press New project. Layers (pictures, paint and text) with hide, lock, opacity, rename, reorder and duplicate, plus brush, eraser, shapes, eyedropper, transform, funny warp, masks and AI smart select, effects, colour correction and export to PNG, JPG or WebP
-- New: Recent projects show a Video or Image tag on each thumbnail
-- New: zoom into the preview (Ctrl + mouse wheel, or the + and - buttons) and move around with the middle mouse button, for tighter masks and AI selections
-- Smart select in the image editor uses the same AI model as the video editor, so nothing extra to download
+- Your Documents folders are renamed to Vibe Editing Suite Projects and Vibe Editing Suite Library (your files and recent projects come along)
+- Fixed: Ctrl+Z and Ctrl+Y did nothing after clicking a slider or colour box (video and image editor)
+- Image editor: the brush and eraser show a circle of their size instead of the mouse pointer
+- Image editor: the brush and shapes are black by default
