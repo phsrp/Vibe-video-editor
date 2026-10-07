@@ -36,7 +36,7 @@ export default function Home({ active, onNew, onOpen, onOpenRecent }) {
         <div className="home-hero">
           <img className="home-logo" src="./icon.png" alt="" />
           <div>
-            <h1>Vibe Video Editor</h1>
+            <h1>Vibe Editing Suite</h1>
             <div className="home-sub">Start something new or pick up where you left off. You can keep several projects open at once.</div>
           </div>
         </div>
@@ -59,14 +59,17 @@ export default function Home({ active, onNew, onOpen, onOpenRecent }) {
           {(recents || []).map((r) => (
             <div key={r.path} className="card" onClick={() => onOpenRecent(r)} title={r.path}>
               <div className="card-thumb" style={{ backgroundImage: r.thumb ? `url("${toUrl(r.thumb)}")` : undefined }}>
-                {!r.thumb && <Icon name="play" size={28} />}
+                {!r.thumb && <Icon name={r.kind === 'image' ? 'image' : 'play'} size={28} />}
+                <span className={'card-badge ' + (r.kind === 'image' ? 'image' : 'video')}>{r.kind === 'image' ? 'image' : 'video'}</span>
                 <button className="card-x" onClick={(e) => remove(e, r)} title="Remove from this list (the file is not deleted)">
                   <Icon name="x" size={12} />
                 </button>
               </div>
               <div className="card-name">{r.name}</div>
               <div className="card-sub">
-                {r.clips} clip{r.clips === 1 ? '' : 's'} · {len(r.duration)} · {ago(r.modified)}
+                {r.kind === 'image'
+                  ? `${r.clips} layer${r.clips === 1 ? '' : 's'} · ${r.size || ''} · ${ago(r.modified)}`
+                  : `${r.clips} clip${r.clips === 1 ? '' : 's'} · ${len(r.duration)} · ${ago(r.modified)}`}
               </div>
             </div>
           ))}

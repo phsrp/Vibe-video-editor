@@ -212,6 +212,8 @@ ipcMain.handle('media:import', async (_e, kind) => {
   const filters =
     kind === 'audio'
       ? [{ name: 'Audio', extensions: AUDIO_EXT }]
+      : kind === 'image'
+      ? [{ name: 'Pictures', extensions: IMAGE_EXT.map((e) => e.slice(1)) }]
       : [
           { name: 'Videos and images', extensions: [...VIDEO_EXT, ...IMAGE_EXT.map((e) => e.slice(1))] },
           { name: 'All files', extensions: ['*'] },
@@ -280,7 +282,7 @@ function createWindow() {
     minWidth: 1000,
     minHeight: 650,
     backgroundColor: '#14151a',
-    title: 'Vibe Video Editor',
+    title: 'Vibe Editing Suite',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
@@ -396,7 +398,7 @@ ipcMain.handle('project:save', async (_e, { file, json, defaultName }) => {
     const r = await dialog.showSaveDialog(mainWindow, {
       title: 'Save project',
       defaultPath: path.join(projectsDir(), defaultName || 'My project.json'),
-      filters: [{ name: 'Video project', extensions: ['json'] }],
+      filters: [{ name: 'Vibe Editing Suite project', extensions: ['json'] }],
     })
     if (r.canceled) return null
     target = r.filePath
@@ -410,10 +412,34 @@ ipcMain.handle('project:open', async () => {
     title: 'Open project',
     defaultPath: projectsDir(),
     properties: ['openFile'],
-    filters: [{ name: 'Video project', extensions: ['json'] }],
+    filters: [{ name: 'Vibe Editing Suite project', extensions: ['json'] }],
   })
   if (r.canceled) return null
   return { file: r.filePaths[0], json: fs.readFileSync(r.filePaths[0], 'utf8') }
+})
+
+// The image editor: save the finished picture (bytes from the page) where the user picks, and small thumbnails for Recent projects
+ipcMain.handle('image:save', async (_e, { data, name, ext }) => {
+  let target = process.env.VIBE_TEST_OUT
+  if (!target) {
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save the picture',
+      defaultPath: path.join(app.getPath('pictures') || projectsDir(), (name || 'My picture') + '.' + ext),
+      filters: [{ name: ext.toUpperCase() + ' picture', extensions: [ext] }],
+    })
+    if (r.canceled) return null
+    target = r.filePath
+  }
+  fs.writeFileSync(target, Buffer.from(data))
+  return target
+})
+ipcMain.handle('thumb:save', (_e, { key, data, replace }) => {
+  const dir = path.join(app.getPath('userData'), 'thumbs')
+  fs.mkdirSync(dir, { recursive: true })
+  if (replace && path.resolve(replace).startsWith(path.resolve(dir))) fs.rmSync(replace, { force: true }) // the earlier thumbnail of this project
+  const file = path.join(dir, require('crypto').createHash('sha1').update(String(key)).digest('hex').slice(0, 16) + '-' + Date.now().toString(36) + '.png')
+  fs.writeFileSync(file, Buffer.from(data))
+  return file
 })
 
 // Recovery copies of projects that were never saved: one file per open project tab.

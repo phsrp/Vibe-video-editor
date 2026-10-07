@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import Editor from './Editor.jsx'
+import ImageEditor from './ImageEditor.jsx'
+import NewProjectDialog from './NewProjectDialog.jsx'
+import { kindOf } from './project.js'
 import Home from './Home.jsx'
 import Icon from './Icon.jsx'
 import SettingsDialog from './SettingsDialog.jsx'
@@ -15,7 +18,8 @@ const newId = () => `p${Date.now().toString(36)}${tabCounter++}`
 // The window: a tab bar (Home + one tab per open project), and the global things
 // (theme, settings, updates). Each open project is its own <Editor>.
 export default function App() {
-  const [tabs, setTabs] = useState([]) // [{id, title, path, dirty, initial}]
+  const [tabs, setTabs] = useState([]) // [{id, title, path, dirty, initial, kind: 'video' | 'image'}]
+  const [chooser, setChooser] = useState(false) // the "New project" question: video or image
   const [activeId, setActiveId] = useState('home')
   const handles = useRef({})
   const [exports, setExports] = useState([]) // Export tabs: [{id, projectId, running, pct, done}]
@@ -59,11 +63,19 @@ export default function App() {
   const updatePending = ['snoozed'].includes(update.state) || (hidden && ['available', 'downloading', 'ready'].includes(update.state))
 
   // ---- tabs
-  const newTab = (initial = null) => {
+  const newTab = (initial = null, kind = 'video') => {
     const id = newId()
-    setTabs((t) => [...t, { id, title: 'Untitled', path: initial && initial.file, dirty: false, initial }])
+    setTabs((t) => [...t, { id, title: 'Untitled', path: initial && initial.file, dirty: false, initial, kind }])
     setActiveId(id)
   }
+  // the "New project" answer: video, or image with its canvas
+  const createProject = (kind, canvas) => {
+    setChooser(false)
+    newTab(kind === 'image' ? { canvas } : null, kind)
+  }
+  useEffect(() => {
+    window.__newTab = createProject // developer self-test
+  })
   // each project can have an Export tab next to it (settings, and the video as it is being made)
   const openExport = (projectId) => {
     const id = 'x' + projectId
@@ -101,7 +113,7 @@ export default function App() {
   const openFile = (file, json) => {
     const existing = tabs.find((t) => t.path === file)
     if (existing) setActiveId(existing.id)
-    else newTab({ file, json })
+    else newTab({ file, json }, kindOf(json))
   }
   const openDialog = async () => {
     const res = await window.api.openProject()
@@ -154,7 +166,7 @@ export default function App() {
 
   const activeTab = tabs.find((t) => t.id === activeId)
   useEffect(() => {
-    document.title = activeTab ? `${activeTab.dirty ? '• ' : ''}${activeTab.title} - Vibe Video Editor` : 'Vibe Video Editor'
+    document.title = activeTab ? `${activeTab.dirty ? '• ' : ''}${activeTab.title} - Vibe Editing Suite` : 'Vibe Editing Suite'
   }, [activeTab && activeTab.title, activeTab && activeTab.dirty, activeId])
 
   // start-up: bring back projects that were open but never saved
@@ -178,7 +190,7 @@ export default function App() {
         else window.api.clearAutosave(a.id)
       }
       saved.forEach((a, i) => {
-        setTabs((t) => [...t, { id: a.id, title: 'Untitled', path: null, dirty: true, initial: { file: null, json: a.json } }])
+        setTabs((t) => [...t, { id: a.id, title: 'Untitled', path: null, dirty: true, initial: { file: null, json: a.json }, kind: kindOf(a.json) }])
         if (i === 0) setActiveId(a.id)
       })
     })()
@@ -200,6 +212,7 @@ export default function App() {
               }
             }}
             title={(t.path || 'Not saved yet') + '\nMiddle-click to save and close'}>
+            <span className="tab-kind" title={t.kind === 'image' ? 'Image project' : 'Video project'}><Icon name={t.kind === 'image' ? 'image' : 'film'} size={12} /></span>
             <span className="tab-title">{t.title}</span>
             {t.dirty && <span className="tab-dot" title="Unsaved changes" />}
             <button
@@ -277,7 +290,7 @@ export default function App() {
             </div>
           )
         })}
-        <button className="tab-plus" onClick={() => newTab()} title="New project">
+        <button className="tab-plus" onClick={() => setChooser(true)} title="New project">
           <Icon name="plus" size={14} />
         </button>
 
@@ -299,24 +312,38 @@ export default function App() {
       </div>
 
       <div className="host">
-        <Home active={activeId === 'home'} onNew={() => newTab()} onOpen={openDialog} onOpenRecent={openRecent} />
-        {tabs.map((t) => (
-          <Editor
-            key={t.id}
-            tabId={t.id}
-            active={activeId === t.id}
-            initial={t.initial}
-            binds={binds}
-            setBinds={setBinds}
-            onMeta={onMeta}
-            onNew={() => newTab()}
-            onOpen={openDialog}
-            onExport={() => openExport(t.id)}
-            onOpenColour={(clipId) => openColour(t.id, clipId)}
-            onOpenJson={(json) => newTab({ file: null, json })}
-            registerHandle={registerHandle}
-          />
-        ))}
+        <Home active={activeId === 'home'} onNew={() => setChooser(true)} onOpen={openDialog} onOpenRecent={openRecent} />
+        {tabs.map((t) =>
+          t.kind === 'image' ? (
+            <ImageEditor
+              key={t.id}
+              tabId={t.id}
+              active={activeId === t.id}
+              initial={t.initial}
+              binds={binds}
+              onMeta={onMeta}
+              onNew={() => setChooser(true)}
+              onOpen={openDialog}
+              registerHandle={registerHandle}
+            />
+          ) : (
+            <Editor
+              key={t.id}
+              tabId={t.id}
+              active={activeId === t.id}
+              initial={t.initial}
+              binds={binds}
+              setBinds={setBinds}
+              onMeta={onMeta}
+              onNew={() => setChooser(true)}
+              onOpen={openDialog}
+              onExport={() => openExport(t.id)}
+              onOpenColour={(clipId) => openColour(t.id, clipId)}
+              onOpenJson={(json) => newTab({ file: null, json })}
+              registerHandle={registerHandle}
+            />
+          ),
+        )}
         {colours.map((x) => (
           <ColourTab
             key={x.id + x.clipId}
@@ -341,6 +368,7 @@ export default function App() {
         ))}
       </div>
 
+      {chooser && <NewProjectDialog onCreate={createProject} onClose={() => setChooser(false)} />}
       {showPopup && (
         <UpdateDialog
           update={update}

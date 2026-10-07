@@ -9,7 +9,7 @@ export default function UpdateDialog({ update, onDownload, onLater, onHide, onIn
           <>
             <h3>A new version is available</h3>
             <p className="upd-text">
-              Vibe Video Editor <b>{update.version}</b> is ready to download. You have {update.current}.
+              Vibe Editing Suite <b>{update.version}</b> is ready to download. You have {update.current}.
             </p>
             {update.notes && update.notes.length > 0 && (
               <>

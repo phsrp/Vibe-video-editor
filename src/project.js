@@ -4,6 +4,7 @@
 export function serialize(state) {
   return JSON.stringify({
     app: 'vibe-video-editor',
+    kind: 'video',
     version: 1,
     media: state.media.map((m) => ({
       id: m.id,
@@ -74,4 +75,64 @@ export async function restore(json) {
   }
 }
 
-if (typeof window !== 'undefined') window.__vibeProject = { serialize, restore } // used by the developer self-test
+ // used by the developer self-test
+
+// ---- image projects: the canvas, the layers (each an overlay clip on a track) and the pictures they use. Paint layers
+// keep their brush strokes inside the clip, so they are saved with it.
+export function serializeImage(state) {
+  return JSON.stringify({
+    app: 'vibe-editing-suite',
+    kind: 'image',
+    version: 1,
+    canvas: state.canvas,
+    media: state.media.map((m) => ({ id: m.id, path: m.path, name: m.name, type: m.type, width: m.width, height: m.height })),
+    overlayClips: state.overlayClips,
+    videoTracks: state.videoTracks,
+    rowOrder: state.rowOrder,
+    lockedRows: state.lockedRows,
+    hiddenRows: state.hiddenRows,
+  })
+}
+
+export async function restoreImage(json) {
+  const data = JSON.parse(json)
+  if (data.kind !== 'image' || !data.canvas) throw new Error('This is not an image project.')
+  const paths = [...new Set(data.media.map((m) => m.path))]
+  const items = paths.length ? await window.api.describeFiles(paths) : []
+  const byPath = new Map(items.map((i) => [i.path, i]))
+  const idMap = new Map()
+  const media = []
+  const missing = []
+  for (const m of data.media) {
+    const item = byPath.get(m.path)
+    const id = item ? item.id : m.id
+    idMap.set(m.id, id)
+    if (media.some((x) => x.id === id)) continue
+    if (item) media.push(item)
+    else {
+      missing.push(m.name)
+      media.push({ ...m, thumb: null, audioFiles: [], audioPending: false, missing: true })
+    }
+  }
+  return {
+    canvas: data.canvas,
+    media,
+    overlayClips: (data.overlayClips || []).map((x) => ({ ...x, mediaId: x.mediaId ? idMap.get(x.mediaId) || x.mediaId : x.mediaId })),
+    videoTracks: data.videoTracks || [],
+    rowOrder: data.rowOrder || [],
+    lockedRows: data.lockedRows || [],
+    hiddenRows: data.hiddenRows || [],
+    missing,
+  }
+}
+
+// 'image' or 'video': what kind of project a saved file is
+export function kindOf(json) {
+  try {
+    return JSON.parse(json).kind === 'image' ? 'image' : 'video'
+  } catch {
+    return 'video'
+  }
+}
+
+if (typeof window !== 'undefined') window.__vibeProject = { serialize, restore, serializeImage, restoreImage, kindOf } // used by the developer self-test

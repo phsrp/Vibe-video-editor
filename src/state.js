@@ -131,7 +131,8 @@ export const ASPECTS = [
   { id: '4:3', label: 'Classic 4:3', ratio: 4 / 3 },
   { id: '21:9', label: 'Cinema 21:9', ratio: 21 / 9 },
 ]
-export const aspectRatio = (state) => (ASPECTS.find((x) => x.id === state.aspect) || ASPECTS[0]).ratio
+// An image project has its own canvas size (state.canvas = {w, h, bg}); a video project one of the ASPECTS.
+export const aspectRatio = (state) => (state.canvas ? state.canvas.w / state.canvas.h : (ASPECTS.find((x) => x.id === state.aspect) || ASPECTS[0]).ratio)
 // the size of the preview picture in pixels for a shape (the longest side is about 1280)
 export function previewSize(ratio) {
   return ratio >= 1 ? [1280, Math.round(1280 / ratio / 2) * 2] : [Math.round((1280 * ratio) / 2) * 2, 1280]
@@ -156,6 +157,10 @@ export function soleVideoClip(state) {
   const others = state.selection.filter((id) => !v.includes(id) && !state.audioClips.some((c) => c.id === id))
   return v.length === 1 && !others.length ? v[0] : null
 }
+
+// the size of a clip's picture: a text or paint layer is as big as the frame / its own canvas, other clips are their file
+export const clipPicture = (state, clip, ratio) =>
+  clip.text ? { width: ratio * 1000, height: 1000 } : clip.paint ? { width: clip.paint.w, height: clip.paint.h } : state.media.find((m) => m.id === clip.mediaId)
 
 // the video rows, bottom layer first (what gets drawn first)
 export const videoRowsBottomUp = (state) => rowKeys(state).filter((k) => k === 'main' || k.startsWith('v:')).reverse()
@@ -182,12 +187,31 @@ export function streamCount(state) {
   return n
 }
 
-const snap = (s) => ({ clips: s.clips, audioClips: s.audioClips, overlayClips: s.overlayClips })
+// What undo / redo bring back. An image project (state.canvas) also has its layer order, locks and canvas in there.
+const snap = (s) =>
+  s.canvas
+    ? { clips: s.clips, audioClips: s.audioClips, overlayClips: s.overlayClips, videoTracks: s.videoTracks, rowOrder: s.rowOrder, lockedRows: s.lockedRows, hiddenRows: s.hiddenRows, canvas: s.canvas }
+    : { clips: s.clips, audioClips: s.audioClips, overlayClips: s.overlayClips }
 const hist = (s) => [...s.past, snap(s)].slice(-100)
 function commit(state, patch) {
   return { ...state, ...patch, past: hist(state), future: [] }
 }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+
+// ---- image layers (see the image project actions in the reducer)
+const LAYER_LONG = 36000 // a layer lasts "forever": an image has no timeline
+const nextLayerName = (state, base) => `${base} ${state.videoTracks.filter((t) => t.name.startsWith(base)).length + 1}`
+function addImageLayer(state, clip, name, extra = {}) {
+  const trackId = uid()
+  const layer = { ...clip, id: clip.id || uid(), trackId, in: 0, out: LAYER_LONG, start: 0 }
+  if (!layer.tf) delete layer.tf
+  return {
+    ...commit(state, { overlayClips: [...state.overlayClips, layer], ...extra }),
+    videoTracks: [...state.videoTracks, { id: trackId, name }],
+    rowOrder: ['v:' + trackId, ...rowKeys(state)],
+    selection: [layer.id],
+  }
+}
 
 // After undo/redo, make sure every audio / overlay clip still has a track to live on.
 function ensureTracks(state) {
@@ -1199,6 +1223,107 @@ export function reducer(state, a) {
 
     case 'setPlaying':
       return { ...state, playing: a.value }
+
+    // ===== image projects (the image editor) =====
+    // A layer is an overlay clip on a track of its own that is shown from second 0 for a very long time. The layer
+    // order is the track order, and hiding / locking use the same row switches as the timeline. Paint layers keep
+    // their brush strokes (clip.paint = {w, h, strokes}) so undo and saving work like for everything else.
+    case 'imgNew':
+      return { ...initialState, canvas: { w: a.w, h: a.h, bg: a.bg || '#ffffff' } }
+    case 'loadImageProject':
+      return {
+        ...initialState,
+        canvas: a.canvas,
+        media: a.media || [],
+        overlayClips: a.overlayClips || [],
+        videoTracks: a.videoTracks || [],
+        rowOrder: a.rowOrder || [],
+        lockedRows: a.lockedRows || [],
+        hiddenRows: a.hiddenRows || [],
+      }
+    case 'setCanvas': {
+      const c = { ...state.canvas, ...a.patch }
+      c.w = clamp(Math.round(c.w) || 16, 16, 16384)
+      c.h = clamp(Math.round(c.h) || 16, 16, 16384)
+      return commit(state, { canvas: c })
+    }
+    case 'imgAddImage': {
+      const m = state.media.find((x) => x.id === a.mediaId)
+      if (!m || m.type !== 'image') return state
+      // the first picture of an empty project decides the size of the canvas
+      let canvas = state.canvas
+      if (a.fitCanvas && !state.overlayClips.length && m.width && m.height) {
+        const k = Math.min(1, 8192 / Math.max(m.width, m.height))
+        canvas = { ...canvas, w: Math.round(m.width * k), h: Math.round(m.height * k) }
+      }
+      return addImageLayer(state, { id: a.id, mediaId: m.id }, m.name.replace(/\.[^.]+$/, ''), { canvas })
+    }
+    case 'imgAddPaint':
+      return addImageLayer(state, { id: a.id, mediaId: null, paint: { w: state.canvas.w, h: state.canvas.h, strokes: [] } }, nextLayerName(state, 'Paint'))
+    case 'imgAddText':
+      return addImageLayer(state, { id: a.id, mediaId: null, text: { ...TEXT_DEFAULTS, ...(a.text || {}), animIn: 'none', animOut: 'none' }, tf: a.y ? { ...DEFAULTS, y: a.y } : undefined }, nextLayerName(state, 'Text'))
+    case 'imgDuplicate': {
+      const c = state.overlayClips.find((x) => x.id === a.id)
+      if (!c) return state
+      const tr = state.videoTracks.find((t) => t.id === c.trackId)
+      const trackId = uid()
+      const copy = { ...JSON.parse(JSON.stringify(c)), id: uid(), trackId }
+      const keys = rowKeys(state)
+      const at = keys.indexOf('v:' + c.trackId)
+      return {
+        ...commit(state, { overlayClips: [...state.overlayClips, copy] }),
+        videoTracks: [...state.videoTracks, { id: trackId, name: ((tr && tr.name) || 'Layer') + ' copy' }],
+        rowOrder: [...keys.slice(0, at), 'v:' + trackId, ...keys.slice(at)],
+        selection: [copy.id],
+      }
+    }
+    case 'imgRemove': {
+      const c = state.overlayClips.find((x) => x.id === a.id)
+      if (!c) return state
+      const key = 'v:' + c.trackId
+      return {
+        ...commit(state, { overlayClips: state.overlayClips.filter((x) => x.id !== a.id) }),
+        videoTracks: state.videoTracks.filter((t) => t.id !== c.trackId),
+        rowOrder: state.rowOrder.filter((k) => k !== key),
+        lockedRows: state.lockedRows.filter((k) => k !== key),
+        hiddenRows: state.hiddenRows.filter((k) => k !== key),
+        selection: state.selection.filter((x) => x !== a.id),
+      }
+    }
+    // move a layer 'up' / 'down' one place, or to the 'top' / 'bottom'
+    case 'imgMove': {
+      const c = state.overlayClips.find((x) => x.id === a.id)
+      if (!c) return state
+      const keys = rowKeys(state)
+      const layers = keys.filter((k) => k.startsWith('v:'))
+      const key = 'v:' + c.trackId
+      const i = layers.indexOf(key)
+      const j = a.to === 'top' ? 0 : a.to === 'bottom' ? layers.length - 1 : a.to === 'up' ? i - 1 : i + 1
+      if (i < 0 || j < 0 || j >= layers.length || j === i) return state
+      const order = layers.filter((k) => k !== key)
+      order.splice(j, 0, key)
+      let n = 0
+      return { ...state, rowOrder: keys.map((k) => (k.startsWith('v:') ? order[n++] : k)) }
+    }
+    // put a layer at place a.index of the layer list (0 = the top one)
+    case 'imgMoveTo': {
+      const c = state.overlayClips.find((x) => x.id === a.id)
+      if (!c) return state
+      const keys = rowKeys(state)
+      const key = 'v:' + c.trackId
+      const order = keys.filter((k) => k.startsWith('v:') && k !== key)
+      order.splice(clamp(a.index, 0, order.length), 0, key)
+      let n = 0
+      return { ...state, rowOrder: keys.map((k) => (k.startsWith('v:') ? order[n++] : k)) }
+    }
+    case 'paintStroke': {
+      const f = (c) => (c.id === a.id && c.paint ? { ...c, paint: { ...c.paint, strokes: [...c.paint.strokes, a.stroke] } } : c)
+      return commit(state, { overlayClips: state.overlayClips.map(f) })
+    }
+    case 'paintClear': {
+      const f = (c) => (c.id === a.id && c.paint ? { ...c, paint: { ...c.paint, strokes: [] } } : c)
+      return commit(state, { overlayClips: state.overlayClips.map(f) })
+    }
 
     case 'undo': {
       if (!state.past.length) return state

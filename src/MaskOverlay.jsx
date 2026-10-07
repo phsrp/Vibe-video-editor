@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { layout, overlayLayout, soleVideoClip, srcAt, speedOf, aspectRatio } from './state.js'
+import { layout, overlayLayout, soleVideoClip, srcAt, speedOf, aspectRatio, clipPicture } from './state.js'
 import { evalTransform, evalProp, keyAt, PROPS, rectToFrame, frameToRect } from './motion.js'
 import { maskPlaced, polyCentre, MAX_POLY, maskAt, frameAt } from './masks.js'
 
@@ -187,7 +187,7 @@ const fewPoints = (pts) => {
 }
 // The mask drawn over the preview: drag inside it to move it (that is the animated Mask X / Y), drag the handles to
 // change its size and turn it, or drag the points of a drawn shape. In "draw" mode, draw around the subject.
-export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFrame }) {
+export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFrame, noTrack }) {
   const [busy, setBusy] = useState('') // text shown while the AI is working
   const [ask, setAsk] = useState(false) // the "follow the subject?" question is open
   const [fixing, setFixing] = useState(false) // the "re-track from here" question is open
@@ -220,7 +220,7 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
   const drawing = mode === 'maskdraw' || smart || clicking
   if (!clip.mask && !drawing) return null
   if (state.playhead < clip.start - 0.001 || state.playhead > clip.start + clip.dur + 0.001) return null
-  const media = clip.text ? { width: RATIO * 1000, height: 1000 } : state.media.find((m) => m.id === clip.mediaId)
+  const media = clipPicture(state, clip, RATIO)
   if (!media || !media.width || !media.height) return null
   const ts = srcAt(clip, state.playhead)
   const ma = media.width / media.height
@@ -267,7 +267,7 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
       dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts: pts.slice(0, MAX_POLY), from: undefined, to: undefined, frames: undefined, ...keep } })
       setPen([])
       setMode('mask')
-      setAsk(true)
+      !noTrack && setAsk(true)
     }
     penRef.current = { pen, finish }
     const where = (e) => {
@@ -333,7 +333,7 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
         if (!smart) {
           dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts: fewPoints(raw), from: undefined, to: undefined, frames: undefined, ...keep } })
           setMode('mask')
-          setAsk(true)
+          !noTrack && setAsk(true)
           return
         }
         // smart: the AI looks at this frame and finds the exact outline of what is inside the loop
@@ -353,7 +353,7 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
               dispatch({ type: 'setMask', id: clip.id, patch: { shape: 'poly', pts, from: undefined, to: undefined, frames: undefined, ...keep } })
               setMode('mask')
               setBusy('')
-              setAsk(true)
+              !noTrack && setAsk(true)
             } else {
               setBusy('No subject was found there. Try drawing the loop a little bigger.')
               setTimeout(() => setBusy(''), 3000)

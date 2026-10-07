@@ -175,7 +175,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
   // ---- saving, opening, autosave
   const rememberRecent = (file, s) => {
     const first = s.clips.map((c) => s.media.find((m) => m.id === c.mediaId)).find((m) => m && m.thumb)
-    window.api.recentAdd({ path: file, name: file.split(/[\\/]/).pop().replace(/\.json$/i, ''), thumb: first ? first.thumb : null, clips: s.clips.length, duration: projectDuration(s) })
+    window.api.recentAdd({ path: file, name: file.split(/[\\/]/).pop().replace(/\.json$/i, ''), kind: 'video', thumb: first ? first.thumb : null, clips: s.clips.length, duration: projectDuration(s) })
   }
 
   const loadFromJson = async (json, file) => {

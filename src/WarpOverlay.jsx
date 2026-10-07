@@ -1,4 +1,4 @@
-import { layout, overlayLayout, soleVideoClip, srcAt, aspectRatio } from './state.js'
+import { layout, overlayLayout, soleVideoClip, srcAt, aspectRatio, clipPicture } from './state.js'
 import { evalTransform, evalWarp, warpQuad, rectToFrame, frameToRect, WARP_ZERO } from './motion.js'
 
 const BASE = [[0, 1], [1, 1], [1, 0], [0, 0]]
@@ -12,7 +12,7 @@ export default function WarpOverlay({ state, dispatch }) {
   const clip = id && (layout(state.clips).find((c) => c.id === id) || overlayLayout(state.overlayClips).find((c) => c.id === id))
   if (!clip) return null
   if (state.playhead < clip.start - 0.001 || state.playhead > clip.start + clip.dur + 0.001) return null
-  const media = state.media.find((m) => m.id === clip.mediaId)
+  const media = clipPicture(state, clip, RATIO)
   if (!media || !media.width || !media.height) return null
   const ts = srcAt(clip, state.playhead)
   const ma = media.width / media.height

@@ -1,4 +1,4 @@
-import { layout, overlayLayout, soleVideoClip, srcAt, aspectRatio } from './state.js'
+import { layout, overlayLayout, soleVideoClip, srcAt, aspectRatio, clipPicture } from './state.js'
 import { evalTransform, evalProp, keyAt, PROPS, rectToFrame } from './motion.js'
 
 // the picture's rectangle (q space, y up): corners, then edge midpoints
@@ -16,7 +16,7 @@ export default function TransformOverlay({ state, dispatch, free, box }) {
   const clip = id && (layout(state.clips).find((c) => c.id === id) || overlayLayout(state.overlayClips).find((c) => c.id === id))
   if (!clip) return null
   if (state.playhead < clip.start - 0.001 || state.playhead > clip.start + clip.dur + 0.001) return null
-  const media = clip.text ? { width: RATIO * 1000, height: 1000 } : state.media.find((m) => m.id === clip.mediaId) // (a text clip is as big as the frame)
+  const media = clipPicture(state, clip, RATIO)
   if (!media || !media.width || !media.height) return null
   const ts = srcAt(clip, state.playhead)
   const ma = media.width / media.height

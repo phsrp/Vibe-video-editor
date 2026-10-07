@@ -1,9 +1,9 @@
 {
   "name": "vibe-video-editor",
-  "version": "1.4.3",
-  "description": "Simple video editor with PowerPoint-style GL transitions",
+  "version": "1.5.0",
+  "description": "Video and image editor suite with PowerPoint-style GL transitions, layers and AI masks",
   "main": "electron/main.js",
-  "author": "Vibe Video Editor",
+  "author": "Vibe Editing Suite",
   "scripts": {
     "build:ui": "vite build",
     "start": "vite build && electron .",
@@ -27,7 +27,7 @@
   },
   "build": {
     "appId": "com.vibe.videoeditor",
-    "productName": "Vibe Video Editor",
+    "productName": "Vibe Editing Suite",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -60,7 +60,7 @@
         }
       ],
       "icon": "build/icon.png",
-      "artifactName": "Vibe-Video-Editor-Setup-${version}.${ext}"
+      "artifactName": "Vibe-Editing-Suite-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": true,
@@ -73,7 +73,7 @@
       {
         "provider": "github",
         "owner": "phsrp",
-        "repo": "Vibe-video-editor",
+        "repo": "Vibe-editing-suite",
         "releaseType": "release"
       }
     ]

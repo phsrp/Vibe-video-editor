@@ -49,7 +49,7 @@ function SpeedPanel({ clip, dispatch }) {
 }
 
 // The text of a text clip: what it says, its look and how it appears and disappears.
-function TextPanel({ clip, dispatch }) {
+function TextPanel({ clip, dispatch, noAnim }) {
   const tx = { ...TEXT_DEFAULTS, ...clip.text }
   const set = (patch) => dispatch({ type: 'setText', id: clip.id, patch })
   const live = (patch) => dispatch({ type: 'setText', id: clip.id, patch, live: true })
@@ -107,6 +107,8 @@ function TextPanel({ clip, dispatch }) {
           <input type="range" min="0" max="100" value={tx.bg.opacity} onPointerDown={start} onChange={(e) => live({ bg: { opacity: +e.target.value } })} />
         </div>
       )}
+      {!noAnim && (
+        <>
       <div className="mtop">
         <span className="mlabel">Appears</span>
         <select value={tx.animIn} onChange={(e) => set({ animIn: e.target.value })}>
@@ -124,13 +126,15 @@ function TextPanel({ clip, dispatch }) {
         </select>
       </div>
       <FxSlider label="Animation length (seconds)" value={tx.animDur} min={0.1} max={2} step={0.05} onStart={start} onChange={(v) => live({ animDur: v })} />
-      <div className="hint left">Drag the text on the preview to move it, or use the Transform sliders. Change how long it lasts by dragging its ends on the timeline.</div>
+        </>
+      )}
+      <div className="hint left">{noAnim ? "Drag the text on the preview to move it, or use the Transform sliders." : "Drag the text on the preview to move it, or use the Transform sliders. Change how long it lasts by dragging its ends on the timeline."}</div>
     </Section>
   )
 }
 
 // A mask shows only part of the clip: a rectangle, an ellipse or a shape you draw around a subject.
-function MaskPanel({ clip, dispatch, mode, setMode }) {
+function MaskPanel({ clip, dispatch, mode, setMode, still }) {
   const mk = clip.mask
   // the AI model for the smart mask is downloaded once, on request
   const [models, setModels] = useState(null) // {ready, totalBytes}
@@ -193,15 +197,15 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
         </div>
       )}
       {!clip.text && noGpu && (
-        <div className="hint warn">Smart select and tracking need a graphics card, and this computer does not seem to have a usable one, so they cannot run here. The rectangle, ellipse, draw and click-points masks still work.</div>
+        <div className="hint warn">{still ? "Smart select needs a graphics card" : "Smart select and tracking need a graphics card"}, and this computer does not seem to have a usable one, so {still ? "it cannot" : "they cannot"} run here. The rectangle, ellipse, draw and click-points masks still work.</div>
       )}
       {!clip.text && !noGpu && gpu && gpu.weak && (
-        <div className="hint warn">This computer's graphics ({gpu.name || 'basic integrated graphics'}) look basic. Smart select and tracking will run, but slowly: tracking can take minutes rather than seconds.</div>
+        <div className="hint warn">This computer's graphics ({gpu.name || 'basic integrated graphics'}) look basic. {still ? 'Smart select will run, but slowly.' : 'Smart select and tracking will run, but slowly: tracking can take minutes rather than seconds.'}</div>
       )}
       {!clip.text && !noGpu && !(info && info.ready) && (
         <>
           <div className="hint left">
-            Smart select and tracking use an AI model (about {info ? Math.round(info.totalBytes / 1e6) : 112} MB). It is downloaded once from the internet and then works without it.
+            {still ? "Smart select uses" : "Smart select and tracking use"} an AI model (about {info ? Math.round(info.totalBytes / 1e6) : 112} MB). It is downloaded once from the internet and then works without it.
           </div>
           {dl ? (
             <>
@@ -216,7 +220,7 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
       )}
       {mode === 'maskdraw' && <div className="hint left">Draw a loop around the subject on the preview, then let go.</div>}
       {mode === 'maskpoly' && <div className="hint left">Click around the subject to place points. Click the first point, double-click or press Enter to finish. Afterwards drag any point to adjust it, double-click the outline to add a point, right-click a point to remove it.</div>}
-      {mode === 'maskdrawsmart' && <div className="hint left">Draw a loose loop around the subject you want. The AI works out its exact edges. When you let go, you can choose to track it through the video.</div>}
+      {mode === 'maskdrawsmart' && <div className="hint left">Draw a loose loop around the subject you want. The AI works out its exact edges.{still ? '' : ' When you let go, you can choose to track it through the video.'}</div>}
       {mk && (
         <>
           <FxSlider label="Soft edge" value={mk.feather || 0} min={0} max={100} onStart={start} onChange={(v) => set({ feather: v }, true)} />
@@ -226,7 +230,7 @@ function MaskPanel({ clip, dispatch, mode, setMode }) {
             <button className={'mini wide' + (mode === 'mask' ? ' on' : '')} onClick={() => setMode(mode === 'mask' ? 'transform' : 'mask')}>{mode === 'mask' ? 'Hide mask on preview' : 'Show mask on preview'}</button>
             <button className="mini wide" onClick={() => dispatch({ type: 'clearMask', id: clip.id })}>Remove mask</button>
           </div>
-          <div className="hint left">{mk.frames && mk.frames.length ? "This mask is tracked: it has its own outline for every moment. To fix a bad moment, show the mask on the preview, go to that moment, drag its points (double-click the outline to add one, right-click to remove one), then press Re-track from here." : "Drag inside the mask to move it. To make it follow the subject, draw the mask around it and choose Track."}</div>
+          <div className="hint left">{mk.frames && mk.frames.length ? "This mask is tracked: it has its own outline for every moment. To fix a bad moment, show the mask on the preview, go to that moment, drag its points (double-click the outline to add one, right-click to remove one), then press Re-track from here." : (still ? "Drag inside the mask to move it, drag its points to reshape it." : "Drag inside the mask to move it. To make it follow the subject, draw the mask around it and choose Track.")}</div>
           {!clip.text && (
             <button className="mini wide" onClick={() => dispatch({ type: 'maskCopyAbove', id: clip.id })} title="Makes a copy of this clip on a new track at the top, with the same mask, so the subject shows in front of text on the tracks below">
               <Icon name="layers" size={13} /> Subject in front of text
@@ -280,9 +284,11 @@ function EffectsPanel({ clip, dispatch, onOpenColour }) {
         </>
       )}
       {any && <button className="mini wide" onClick={() => dispatch({ type: 'resetFx', id: clip.id, only: 'effects' })}>Reset effects</button>}
-      <button className="mini wide" onClick={() => onOpenColour && onOpenColour(clip.id)} title="Open the Colour tab for this clip">
-        <Icon name="palette" size={13} /> Colour correction…{fx.cc && Object.keys(fx.cc).length ? ' (on)' : ''}
-      </button>
+      {onOpenColour && (
+        <button className="mini wide" onClick={() => onOpenColour(clip.id)} title="Open the Colour tab for this clip">
+          <Icon name="palette" size={13} /> Colour correction…{fx.cc && Object.keys(fx.cc).length ? ' (on)' : ''}
+        </button>
+      )}
     </Section>
   )
 }
@@ -710,3 +716,6 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
     </aside>
   )
 }
+
+// the panels the image editor reuses
+export { TextPanel, MaskPanel, EffectsPanel, FxSlider, Section }

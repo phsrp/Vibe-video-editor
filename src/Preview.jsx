@@ -358,25 +358,82 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
     onCompiled && onCompiled(errors)
   }, [transitions])
 
-  // the picture is always 16:9: fit it into the available space (the warp handles are drawn on top of it)
+  // the picture fits the available space; zoom (1 = fit) makes it bigger, and the area then scrolls (wheel + Ctrl zooms
+  // towards the pointer, the middle mouse button drags the picture around). Handy for tight masks.
+  const areaRef = useRef(null)
   const wrapRef = useRef(null)
   const ratio = aspectRatio(state)
-  const [cw, ch] = previewSize(ratio)
-  const [box, setBox] = useState({ w: 640, h: 360 })
+  const [zoom, setZoomState] = useState(1)
+  const [fitBox, setFitBox] = useState({ w: 640, h: 360 })
+  const zoomRef = useRef(1)
+  const [cw0, ch0] = previewSize(ratio)
+  const sharp = Math.min(3, Math.max(1, zoom)) // the picture is drawn finer while zoomed in
+  const cw = Math.round(cw0 * sharp)
+  const ch = Math.round(ch0 * sharp)
+  const box = { w: fitBox.w * zoom, h: fitBox.h * zoom }
   useEffect(() => {
-    const el = wrapRef.current
+    const el = areaRef.current
     const fit = () => {
-      const w = Math.max(1, Math.min(el.clientWidth, el.clientHeight * ratio))
-      setBox({ w, h: w / ratio })
+      const pad = 28 // room around the picture for handles that stick out
+      const w = Math.max(1, Math.min(el.clientWidth - pad, (el.clientHeight - pad) * ratio))
+      setFitBox({ w, h: w / ratio })
     }
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(el)
     return () => ro.disconnect()
   }, [ratio])
+  // change the zoom keeping the point under (px, py) (pixels inside the scroll area) where it is
+  const setZoom = (z, px, py) => {
+    const wrap = wrapRef.current
+    const nz = Math.min(16, Math.max(1, z))
+    const old = zoomRef.current
+    if (nz === old) return
+    if (wrap) {
+      const cx = px == null ? wrap.clientWidth / 2 : px
+      const cy = py == null ? wrap.clientHeight / 2 : py
+      const fx = (wrap.scrollLeft + cx) / old
+      const fy = (wrap.scrollTop + cy) / old
+      zoomRef.current = nz
+      setZoomState(nz)
+      requestAnimationFrame(() => {
+        wrap.scrollLeft = fx * nz - cx
+        wrap.scrollTop = fy * nz - cy
+      })
+    } else {
+      zoomRef.current = nz
+      setZoomState(nz)
+    }
+  }
+  const onWheel = (e) => {
+    if (!e.ctrlKey) return
+    e.preventDefault()
+    const r = wrapRef.current.getBoundingClientRect()
+    setZoom(zoomRef.current * (e.deltaY < 0 ? 1.2 : 1 / 1.2), e.clientX - r.left, e.clientY - r.top)
+  }
+  const onPan = (e) => {
+    if (e.button !== 1) return
+    e.preventDefault()
+    const wrap = wrapRef.current
+    const x0 = e.clientX
+    const y0 = e.clientY
+    const sl = wrap.scrollLeft
+    const st = wrap.scrollTop
+    const move = (ev) => {
+      wrap.scrollLeft = sl - (ev.clientX - x0)
+      wrap.scrollTop = st - (ev.clientY - y0)
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
 
   return (
-    <div className="preview-wrap" ref={wrapRef}>
+    <div className="preview-area" ref={areaRef}>
+    <div className="preview-wrap" ref={wrapRef} onWheel={onWheel} onPointerDown={onPan} onAuxClick={(e) => e.preventDefault()}>
       <div className="preview-box" style={{ width: box.w, height: box.h }}>
         <canvas ref={canvasRef} width={cw} height={ch} className="preview-canvas" />
         {mode === 'warp' && <WarpOverlay state={state} dispatch={dispatch} />}
@@ -399,6 +456,13 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
           />
         )}
       </div>
+    </div>
+    <div className="zoom-bar">
+      <button className="mini" onClick={() => setZoom(zoomRef.current / 1.5)} title="Zoom out the preview">−</button>
+      <span title="Ctrl + mouse wheel zooms towards the pointer; drag with the middle mouse button to move around">{Math.round(zoom * 100)}%</span>
+      <button className="mini" onClick={() => setZoom(zoomRef.current * 1.5)} title="Zoom in the preview (Ctrl + mouse wheel zooms towards the pointer)">+</button>
+      <button className="mini" onClick={() => setZoom(1)} title="Fit the picture in the preview">Fit</button>
+    </div>
     </div>
   )
 }

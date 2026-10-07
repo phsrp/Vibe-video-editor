@@ -1,1 +1,5 @@
-- New: delete media from inside the editor. Hover over an item in the Media panel and click its x to take it out of the project, or over an item in the Library and click its x to delete the file (it goes to the Recycle Bin). You are asked first
+- BIG UPDATE: the editor is now Vibe Editing Suite, a video editor and an image editor in one
+- New: image projects. Pick Video or Image when you press New project. Layers (pictures, paint and text) with hide, lock, opacity, rename, reorder and duplicate, plus brush, eraser, shapes, eyedropper, transform, funny warp, masks and AI smart select, effects, colour correction and export to PNG, JPG or WebP
+- New: Recent projects show a Video or Image tag on each thumbnail
+- New: zoom into the preview (Ctrl + mouse wheel, or the + and - buttons) and move around with the middle mouse button, for tighter masks and AI selections
+- Smart select in the image editor uses the same AI model as the video editor, so nothing extra to download

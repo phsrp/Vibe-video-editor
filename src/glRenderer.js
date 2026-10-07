@@ -331,9 +331,11 @@ export function createRenderer(canvas) {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src)
   }
 
-  function clear() {
+  // bg = [r, g, b, a] (0..1, premultiplied): the image editor's background; a video's is black
+  function clear(bg) {
     gl.viewport(0, 0, canvas.width, canvas.height)
-    gl.clearColor(0, 0, 0, 1)
+    const c = bg || [0, 0, 0, 1]
+    gl.clearColor(c[0], c[1], c[2], c[3])
     gl.clear(gl.COLOR_BUFFER_BIT)
   }
 
@@ -364,8 +366,8 @@ export function createRenderer(canvas) {
     drawLayer(A, B, name, progress)
   }
   // layers: bottom to top, each {A, B?, name?, progress?}
-  function renderLayers(layers) {
-    clear()
+  function renderLayers(layers, bg) {
+    clear(bg)
     for (const l of layers) drawLayer(l.A, l.B, l.name, l.progress)
   }
 

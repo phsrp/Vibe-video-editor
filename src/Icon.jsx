@@ -1,5 +1,13 @@
 // Simple one-colour line icons (they take the text colour, so they follow the theme and stay sharp at any size).
 const PATHS = {
+  move: (<><path d="M12 3v18M3 12h18" /><path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" /></>),
+  brush: (<><path d="M18 3a2.1 2.1 0 0 1 3 3L11 16l-4 1 1-4L18 3Z" /><path d="M7 17c-2 0-4 1-4 4 3 0 4-1 4-4Z" /></>),
+  eraser: (<><path d="m7 21-4-4a2 2 0 0 1 0-2.8l10-10a2 2 0 0 1 2.8 0l4.4 4.4a2 2 0 0 1 0 2.8L12 21H7Z" /><path d="m9 8 7 7M22 21H7" /></>),
+  line: (<path d="M5 19 19 5" />),
+  square: (<rect x="4" y="4" width="16" height="16" rx="1.5" />),
+  circle: (<circle cx="12" cy="12" r="8.5" />),
+  pipette: (<><path d="m2 22 1-1h3l9-9" /><path d="M3 21v-3l9-9" /><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" /></>),
+  image: (<><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" /></>),
   layers: (<><path d="M12 3 2 8l10 5 10-5-10-5Z" /><path d="M2 13l10 5 10-5M2 17.5 12 22.5l10-5" /></>),
   map: (<><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6Z" /><path d="M9 4v14M15 6v14" /></>),
   lock: (<><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>),
