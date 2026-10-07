@@ -1,4 +1,2 @@
-- Your Documents folders are renamed to Vibe Editing Suite Projects and Vibe Editing Suite Library (your files and recent projects come along)
-- Fixed: Ctrl+Z and Ctrl+Y did nothing after clicking a slider or colour box (video and image editor)
-- Image editor: the brush and eraser show a circle of their size instead of the mouse pointer
-- Image editor: the brush and shapes are black by default
+- New: a short first-time tutorial for the video editor and the image editor. It shows the key features one step at a time, and you can replay it any time with the Tutorial button at the top
+- README has a tutorial section with screenshots
