@@ -20,9 +20,9 @@ function track(proc) {
 }
 
 // Runs ffmpeg to completion. Resolves with stderr; rejects with the tail of stderr on failure.
-function runFfmpeg(ffmpegPath, args, onStdout) {
+function runFfmpeg(ffmpegPath, args, onStdout, cwd) {
   return new Promise((resolve, reject) => {
-    const proc = track(spawn(ffmpegPath, args, { windowsHide: true }))
+    const proc = track(spawn(ffmpegPath, args, { windowsHide: true, cwd }))
     let err = ''
     proc.stderr.on('data', (d) => (err = (err + d).slice(-6000)))
     if (onStdout) proc.stdout.on('data', onStdout)
@@ -39,9 +39,53 @@ function runFfmpeg(ffmpegPath, args, onStdout) {
 const fit = (w, h) => `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1`
 
 // ---- the final ffmpeg command: join pieces, mix audio, encode
-function buildFinal(plan, dir) {
+// Every source file is opened inside the filter script (movie / amovie), not with "-i" on the command line.
+// Windows only allows about 32,000 characters for a command, so a long timeline (one piece per clip) would not fit,
+// while the script file has no such limit. (Checked: same frames and same audio samples as -ss / -t inputs.)
+// A filter value is escaped twice: once for the option, once for the filter graph.
+const fq = (s) =>
+  String(s)
+    .replace(/\\/g, '/')
+    .replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:')
+    .replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[[\],;]/g, (m) => '\\' + m)
+const num = (v) => (+v).toFixed(6)
+
+// what ffmpeg says about a file: where its timestamps start, and the numbers of its audio streams
+const probeCache = new Map()
+function probeFile(ffmpegPath, file) {
+  if (!probeCache.has(file)) {
+    probeCache.set(
+      file,
+      new Promise((resolve) => {
+        require('child_process').execFile(ffmpegPath, ['-hide_banner', '-i', file], { windowsHide: true, maxBuffer: 8e6 }, (_err, _out, text) => {
+          text = String(text || '')
+          const start = /start: (-?[\d.]+)/.exec(text)
+          const audio = []
+          for (const m of text.matchAll(/Stream #0:(\d+)[^\n]*?: Audio/g)) audio.push(+m[1])
+          resolve({ start: start ? +start[1] : 0, audio })
+        })
+      })
+    )
+  }
+  return probeCache.get(file)
+}
+async function probePlan(ffmpegPath, plan) {
+  const files = new Set()
+  plan.segments.forEach((s) => s.kind !== 'trans' && !s.isImage && s.file && files.add(s.file))
+  plan.audio.forEach((t) => t.clips.forEach((c) => files.add(c.file)))
+  const info = new Map()
+  for (const f of files) info.set(f, await probeFile(ffmpegPath, f))
+  return info
+}
+
+// Two ways to feed the files to ffmpeg:
+//  - info == null: "-i" inputs on the command line (the usual way)
+//  - info given:   movie / amovie inside the script file (for projects with so many pieces that the command would be too long)
+function buildFinal(plan, dir, info) {
   const inputs = []
   const filters = []
+  const script = !!info
+  const meta = (f) => (info && info.get(f)) || { start: 0, audio: [] }
   let n = 0
   const addInput = (...a) => {
     inputs.push(...a)
@@ -51,21 +95,26 @@ function buildFinal(plan, dir) {
   // video pieces
   const vlabels = []
   plan.segments.forEach((s, k) => {
-    let i
+    let head // how the piece starts: the input stream, or a movie source
     let pre
     if (s.kind === 'trans') {
-      i = addInput('-i', path.join(dir, `seg_${s.k}.mp4`))
+      head = script ? `movie=filename=${fq(path.join(dir, `seg_${s.k}.mp4`))}:streams=dv,tpad=stop=3:stop_mode=clone,` : `[${addInput('-i', path.join(dir, `seg_${s.k}.mp4`))}:v:0]`
       pre = `setpts=PTS-STARTPTS,fps=${plan.fps},format=yuv420p`
     } else if (s.isImage) {
-      i = addInput('-loop', '1', '-framerate', String(plan.fps), '-t', String(s.frames / plan.fps + 1), '-i', s.file)
+      // one picture, repeated for as long as the piece lasts
+      head = script ? `movie=filename=${fq(s.file)}:streams=dv,loop=loop=-1:size=1,setpts=N/(${plan.fps}*TB),` : `[${addInput('-loop', '1', '-framerate', String(plan.fps), '-t', String(s.frames / plan.fps + 1), '-i', s.file)}:v:0]`
       pre = `fps=${plan.fps},${fit(plan.w, plan.h)},format=yuv420p`
     } else {
-      i = addInput('-ss', String(s.srcStart), '-t', String(s.srcDur), '-i', s.file)
+      if (script) {
+        const a = s.srcStart + meta(s.file).start
+        // (tpad before fps: otherwise fps loses the last frame of a file; the extra copies are cut off below)
+        head = `movie=filename=${fq(s.file)}:seek_point=${num(s.srcStart)}:streams=dv,trim=start=${num(a)}:end=${num(a + s.srcDur)},setpts=PTS-STARTPTS,tpad=stop=3:stop_mode=clone,`
+      } else head = `[${addInput('-ss', String(s.srcStart), '-t', String(s.srcDur), '-i', s.file)}:v:0]`
       // setpts makes the clip play faster or slower (speed 2 = twice as fast)
       pre = `setpts=PTS/${s.speed || 1},fps=${plan.fps},${fit(plan.w, plan.h)},format=yuv420p`
     }
     // exactly s.frames frames per piece, so audio and video stay in sync over the whole timeline
-    filters.push(`[${i}:v:0]${pre},setpts=PTS-STARTPTS,tpad=stop=4:stop_mode=clone,trim=end_frame=${s.frames},setpts=PTS-STARTPTS[v${k}]`)
+    filters.push(`${head}${pre},setpts=PTS-STARTPTS,tpad=stop=4:stop_mode=clone,trim=end_frame=${s.frames},setpts=PTS-STARTPTS[v${k}]`)
     vlabels.push(`[v${k}]`)
   })
   // the picture is also saved as a small preview image twice a second, which the Export tab shows while it works
@@ -80,8 +129,17 @@ function buildFinal(plan, dir) {
   plan.audio.forEach((t, ti) => {
     const clipLabels = []
     t.clips.forEach((c, ci) => {
-      const i = addInput('-ss', String(c.srcStart), '-t', String(c.srcDur || c.dur), '-i', c.file)
-      let chain = `[${i}:a:${c.stream}]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS`
+      let chain
+      if (script) {
+        const m = meta(c.file)
+        const abs = m.audio[c.stream] != null ? m.audio[c.stream] : m.audio[0] != null ? m.audio[0] : 0 // this audio stream's number in the file
+        const a = c.srcStart + m.start
+        chain = `amovie=filename=${fq(c.file)}:seek_point=${num(c.srcStart)}:streams=${abs},atrim=start=${num(a)}:end=${num(a + (c.srcDur || c.dur))},asetpts=PTS-STARTPTS`
+      } else {
+        const i = addInput('-ss', String(c.srcStart), '-t', String(c.srcDur || c.dur), '-i', c.file)
+        chain = `[${i}:a:${c.stream}]`
+      }
+      chain += `${script ? ',' : ''}aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS`
       if (c.reverse) chain += ',areverse'
       // speed: atempo only takes 0.5 to 2 at a time, so a bigger change is a chain of them
       let sp = c.speed || 1
@@ -97,7 +155,8 @@ function buildFinal(plan, dir) {
       chain += `,volume=${c.vol}`
       if (c.fadeIn > 0) chain += `,afade=t=in:st=0:d=${c.fadeIn}`
       if (c.fadeOut > 0) chain += `,afade=t=out:st=${Math.max(0, c.dur - c.fadeOut)}:d=${c.fadeOut}`
-      if (c.at > 0.0005) chain += `,adelay=${Math.round(c.at * 1000)}:all=1`
+      // (script mode: adelay leaves odd timestamps on movie sources, which made a later atrim cut the sound short)
+      if (c.at > 0.0005) chain += `,adelay=${Math.round(c.at * 1000)}:all=1${script ? ',asetpts=N/SR/TB' : ''}`
       const label = `[a${ti}_${ci}]`
       filters.push(chain + label)
       clipLabels.push(label)
@@ -267,7 +326,11 @@ function register({ ffmpegPath, getWindow }) {
   })
 
   ipcMain.handle('export:final', async (e, plan) => {
-    const args = buildFinal(plan, job.dir)
+    // Usually the files are given to ffmpeg as "-i" inputs. Windows allows about 32,000 characters for a command, so when
+    // the project has too many pieces for that, the files are opened from the script file instead (no limit).
+    let args = buildFinal(plan, job.dir, null)
+    const tooLong = args.reduce((sum, a) => sum + String(a).length + 3, 0) > 28000
+    if (tooLong || process.env.VIBE_FORCE_SCRIPT) args = buildFinal(plan, job.dir, await probePlan(ffmpegPath, plan))
     let buf = ''
     await runFfmpeg(ffmpegPath, args, (d) => {
       buf += d
@@ -280,7 +343,7 @@ function register({ ffmpegPath, getWindow }) {
         const sm = /^out_time_(?:ms|us)=(\d+)/.exec(l.trim())
         if (sm && plan.audioOnly) e.sender.send('export:progress', { frame: Math.round((+sm[1] / 1e6) * plan.fps) })
       }
-    })
+    }, job.dir)
     return plan.out
   })
 
