@@ -176,6 +176,62 @@ export function audioSource(a, media) {
 export const hasAttached = (c, media, n) =>
   !!media && media.type === 'video' && n < (media.audioStreams || []).length && !(c.noAudio || []).includes(n)
 
+// The volume and mute of ONE clip's sound: attached stream n of a video clip (clip.av[n]), or a detached audio clip
+// (its own volume / mute). It sits on top of the lane / track setting, which is 100% unless an older project changed it.
+export const streamAudioOf = (c, n) => {
+  const s = (c.av && c.av[n]) || {}
+  return { volume: s.volume ?? 1, mute: !!s.mute }
+}
+export const audioClipVol = (a) => ({ volume: a.volume ?? 1, mute: !!a.mute })
+const avFields = (c, n) => {
+  const s = streamAudioOf(c, n)
+  return s.volume !== 1 || s.mute ? { volume: s.volume, mute: s.mute } : {}
+}
+// where a clip of length dur starting at s fits on a track (it moves to the end of whatever it would overlap)
+const nextFree = (clips, s, dur) => {
+  for (const x of [...clips].sort((p, q) => p.start - q.start)) {
+    const xe = x.start + (x.out - x.in)
+    if (s < xe - 1e-6 && s + dur > x.start + 1e-6) s = xe
+  }
+  return s
+}
+
+// Split ONLY the selected sound at time t (the picture and the other sounds stay whole).
+// A selected attached stream is detached first (it becomes a detached audio clip), then cut.
+function splitAudioOnly(state, ids, t) {
+  const lay = layout(state.clips)
+  const tracks = [...state.audioTracks]
+  const detached = []
+  for (const id of ids) {
+    if (!id.startsWith('sa:')) continue
+    const [, cid, ns] = id.split(':')
+    const n = +ns
+    const c = lay.find((x) => x.id === cid)
+    const m = c && state.media.find((x) => x.id === c.mediaId)
+    if (!c || !m || !hasAttached(c, m, n) || isLocked(state, id)) continue
+    if (!(t > c.start + MIN_CLIP && t < c.start + c.dur - MIN_CLIP)) continue
+    if (speedOf(c) !== 1 || c.reverse) continue // the sound of a sped-up or reversed clip cannot be cut on its own
+    const tid = 'ug' + n
+    if (!tracks.some((x) => x.id === tid)) tracks.push({ id: tid, name: `Video audio ${n + 1} (detached)`, kind: 'free', volume: 1, mute: false })
+    detached.push({ cid, n, clip: { id: uid(), mediaId: m.id, stream: n, trackId: tid, in: c.in, out: c.out, start: c.start, origin: c.id, groupId: c.groupId, ...avFields(c, n) } })
+  }
+  const clips = state.clips.map((c) => {
+    const ns = detached.filter((d) => d.cid === c.id).map((d) => d.n)
+    return ns.length ? { ...c, noAudio: [...new Set([...(c.noAudio || []), ...ns])] } : c
+  })
+  const cutIds = new Set([...detached.map((d) => d.clip.id), ...ids.filter((id) => !id.startsWith('sa:'))])
+  const select = []
+  const audioClips = [...state.audioClips, ...detached.map((d) => d.clip)].flatMap((x) => {
+    if (!cutIds.has(x.id) || isLocked(state, x.id) || !(t > x.start + MIN_CLIP && t < x.start + (x.out - x.in) - MIN_CLIP)) return [x]
+    const mid = x.in + (t - x.start)
+    const right = { ...x, id: uid(), in: mid, start: t }
+    select.push(right.id)
+    return [{ ...x, out: mid }, right]
+  })
+  if (!select.length) return state
+  return { ...commit(state, { clips, audioClips }), audioTracks: tracks, selection: select }
+}
+
 // How many audio lanes the timeline needs (highest attached stream number + 1).
 export function streamCount(state) {
   let n = 0
@@ -458,6 +514,9 @@ export function reducer(state, a) {
     }
 
     case 'split': {
+      // only sound selected: cut just that sound, not the picture or the other sounds
+      const onlyAudio = state.selection.length > 0 && state.selection.every((id) => id.startsWith('sa:') || state.audioClips.some((x) => x.id === id))
+      if (onlyAudio) return splitAudioOnly(state, state.selection, a.t)
       // a selected overlay clip under the playhead is split instead of the main video (its grouped audio too)
       const ol = overlayLayout(state.overlayClips).find((x) => state.selection.includes(x.id) && !isLocked(state, x.id) && a.t > x.start + MIN_CLIP && a.t < x.start + x.dur - MIN_CLIP)
       if (ol) {
@@ -813,7 +872,7 @@ export function reducer(state, a) {
         for (const n of streams) {
           const tid = 'ug' + n
           if (!tracks.some((t) => t.id === tid)) tracks.push({ id: tid, name: `Video audio ${n + 1} (detached)`, kind: 'free', volume: 1, mute: false })
-          added.push({ id: uid(), mediaId: m.id, stream: n, trackId: tid, in: c.in, out: c.out, start: c.start, origin: c.id, groupId: c.groupId })
+          added.push({ id: uid(), mediaId: m.id, stream: n, trackId: tid, in: c.in, out: c.out, start: c.start, origin: c.id, groupId: c.groupId, ...avFields(c, n) })
         }
         if (streams.length) detached.set(c.id, streams)
       }
@@ -928,7 +987,7 @@ export function reducer(state, a) {
       for (const n of streams) {
         const tid = 'ug' + n
         if (!tracks.some((t) => t.id === tid)) tracks.push({ id: tid, name: `Video audio ${n + 1} (detached)`, kind: 'free', volume: 1, mute: false })
-        added.push({ id: uid(), mediaId: m.id, stream: n, trackId: tid, in: c.in, out: c.out, start, origin: c.id, groupId: gid })
+        added.push({ id: uid(), mediaId: m.id, stream: n, trackId: tid, in: c.in, out: c.out, start, origin: c.id, groupId: gid, ...avFields(c, n) })
       }
       // audio grouped with the clips that moved up or down the main track follows them
       const after = layout(clips)
@@ -1126,21 +1185,49 @@ export function reducer(state, a) {
       return { ...state, audioTracks: state.audioTracks.map((t) => (t.id === a.id ? { ...t, ...a.patch } : t)) }
     case 'setStream':
       return { ...state, streamSettings: { ...state.streamSettings, [a.n]: { volume: 1, mute: false, ...state.streamSettings[a.n], ...a.patch } } }
+    // volume / mute of single audio clips (ids: 'sa:<clip>:<n>' for the sound of a video clip, or audio clip ids).
+    // live: while a slider is dragged (call 'checkpoint' first), so the whole drag is one undo step
+    case 'setClipAudio': {
+      const ids = a.ids || [a.id]
+      const idSet = new Set(ids)
+      const per = new Map() // video clip id -> its stream numbers
+      for (const id of ids) {
+        if (!id.startsWith('sa:')) continue
+        const [, cid, n] = id.split(':')
+        per.set(cid, [...(per.get(cid) || []), +n])
+      }
+      const clips = state.clips.map((c) => {
+        if (!per.has(c.id)) return c
+        const av = { ...(c.av || {}) }
+        for (const n of per.get(c.id)) av[n] = { ...streamAudioOf(c, n), ...a.patch }
+        return { ...c, av }
+      })
+      const audioClips = state.audioClips.map((x) => (idSet.has(x.id) ? { ...x, ...a.patch } : x))
+      return a.live ? { ...state, clips, audioClips } : commit(state, { clips, audioClips })
+    }
 
     case 'addAudioClip': {
       const m = state.media.find((x) => x.id === a.mediaId)
       if (!m || m.type !== 'audio') return state
       let tracks = state.audioTracks
       let trackId = a.trackId
-      if (!trackId) {
-        const free = tracks.find((t) => !t.id.startsWith('ug'))
+      const want = Math.max(0, a.start || 0)
+      const len = m.duration || 0
+      const on = (tid) => state.audioClips.filter((x) => x.trackId === tid)
+      let start = want
+      if (trackId) {
+        // dropped on a track: it goes where it is dropped, or just after what is in the way (a gap that is big enough is used)
+        start = nextFree(on(trackId), want, len)
+      } else {
+        // no track given (double-click, or dropped on a video's sound lane): the first track that has room there, else a new track
+        const free = tracks.find((t) => !t.id.startsWith('ug') && nextFree(on(t.id), want, len) === want)
         if (free) trackId = free.id
         else {
           trackId = a.newTrackId || uid()
-          tracks = [...tracks, { id: trackId, name: 'Audio 1', kind: 'free', volume: 1, mute: false }]
+          tracks = [...tracks, { id: trackId, name: nextAudioName(tracks), kind: 'free', volume: 1, mute: false }]
         }
       }
-      const clip = { id: uid(), mediaId: m.id, trackId, in: 0, out: m.duration, start: Math.max(0, a.start || 0) }
+      const clip = { id: uid(), mediaId: m.id, trackId, in: 0, out: m.duration, start }
       return { ...commit(state, { audioClips: [...state.audioClips, clip] }), audioTracks: tracks, selection: [clip.id] }
     }
 

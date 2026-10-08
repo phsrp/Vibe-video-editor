@@ -493,3 +493,9 @@ input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var
 .tour-count { float: right; color: var(--dim); font-size: 11px; }
 .tour-actions { display: flex; justify-content: space-between; align-items: center; }
 .tour-nav { display: flex; gap: 6px; }
+
+/* drag bar above the timeline: resizes it */
+.tl-split { flex: none; height: 7px; margin: -3px 0 -4px; position: relative; z-index: 5; cursor: ns-resize; background: transparent; }
+.tl-split::after { content: ''; position: absolute; left: 50%; top: 2px; width: 46px; height: 3px; margin-left: -23px; border-radius: 2px; background: var(--line); transition: background .15s; }
+.tl-split:hover::after { background: var(--accent); }
+.timeline { flex: none; }

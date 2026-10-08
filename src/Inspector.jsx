@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { layout, overlayLayout, soleVideoClip, srcAt, tlOf, speedOf, fmtDur, aspectRatio } from './state.js'
+import { layout, overlayLayout, soleVideoClip, srcAt, tlOf, speedOf, fmtDur, aspectRatio, streamAudioOf, audioClipVol } from './state.js'
 import Icon from './Icon.jsx'
 import { PROPS, evalProp, keyAt, KEY_EPS } from './motion.js'
 import EaseEditor from './EaseEditor.jsx'
@@ -493,40 +493,47 @@ function WarpControls({ clip, playhead, dispatch }) {
     </>
   )
 }
-// Volume (0 to 200%) and mute for the selected audio. They are the same settings as the sliders in the
-// track labels on the timeline, so the two always agree. The setting belongs to the whole lane / track.
+// Volume (0 to 200%) and mute of the selected audio clip(s). Every clip has its own setting, so each one can be
+// louder or quieter than the others on its track. (Older projects may still have a lane / track volume: it is shown
+// with a button to put it back to 100%.)
 function AudioPanel({ state, dispatch }) {
-  const id = state.selection[0]
+  const ids = state.selection
+  const id = ids[0]
+  const many = ids.length > 1
   const [target, setTarget] = useState(-14)
   const [busy, setBusy] = useState(false)
   const [loud, setLoud] = useState('')
   let name = ''
   let st = null
-  let patch = null
-  let note = ''
+  let laneVol = 1
+  let resetLane = null
   let source = null // what the loudness button measures: {file, from, to}
   if (id.startsWith('sa:')) {
     const n = +id.split(':')[2]
     const vc = state.clips.find((x) => x.id === id.split(':')[1])
     const vm = vc && state.media.find((m) => m.id === vc.mediaId)
     if (vc && vm && (vm.audioFiles || [])[n]) source = { file: vm.audioFiles[n], from: vc.in, to: vc.out }
-    st = { volume: 1, mute: false, ...state.streamSettings[n] }
-    name = st.name || `Video audio ${n + 1}`
-    patch = (p) => dispatch({ type: 'setStream', n, patch: p })
-    note = 'This sets the volume of the whole audio lane, for every clip on it.'
+    if (vc) st = streamAudioOf(vc, n)
+    const lane = state.streamSettings[n] || {}
+    name = lane.name || `Video audio ${n + 1}`
+    laneVol = lane.volume ?? 1
+    resetLane = () => dispatch({ type: 'setStream', n, patch: { volume: 1 } })
   } else {
     const a = state.audioClips.find((x) => x.id === id)
     const tr = a && state.audioTracks.find((x) => x.id === a.trackId)
     const am = a && state.media.find((m) => m.id === a.mediaId)
     const af = a && am ? (a.stream != null ? (am.audioFiles || [])[a.stream] : am.path) : null
     if (af) source = { file: af, from: a.in, to: a.out }
+    if (a) st = audioClipVol(a)
     if (tr) {
-      st = tr
       name = tr.name
-      patch = (p) => dispatch({ type: 'setTrack', id: tr.id, patch: p })
-      note = 'This sets the volume of the whole track, for every clip on it.'
+      laneVol = tr.volume ?? 1
+      resetLane = () => dispatch({ type: 'setTrack', id: tr.id, patch: { volume: 1 } })
     }
   }
+  if (many) name = `${ids.length} audio clips`
+  const patch = (p, live) => dispatch({ type: 'setClipAudio', ids, patch: p, live })
+  const note = many ? `Changes the volume of all ${ids.length} selected clips.` : 'This changes only this clip. Other clips on the same track keep their own volume.'
   if (!st) return <div className="hint">Audio selected. Drag it to move it, drag its edges to trim it, or press Delete.</div>
   const pct = Math.round(st.volume * 100)
   // measure how loud the selected clip is and set the volume so it comes out at the target loudness
@@ -557,8 +564,8 @@ function AudioPanel({ state, dispatch }) {
         </button>
       </div>
       <div className="minput">
-        <input type="range" min="0" max="200" step="1" value={pct} className={pct > 100 ? 'boosted' : ''} onChange={(e) => patch({ volume: +e.target.value / 100 })} />
-        <input type="number" min="0" max="200" step="1" value={pct} onChange={(e) => e.target.value !== '' && patch({ volume: Math.max(0, Math.min(200, +e.target.value)) / 100 })} />
+        <input type="range" min="0" max="200" step="1" value={pct} className={pct > 100 ? 'boosted' : ''} onPointerDown={() => dispatch({ type: 'checkpoint' })} onChange={(e) => patch({ volume: +e.target.value / 100 }, true)} />
+        <input type="number" min="0" max="200" step="1" value={pct} onFocus={() => dispatch({ type: 'checkpoint' })} onChange={(e) => e.target.value !== '' && patch({ volume: Math.max(0, Math.min(200, +e.target.value)) / 100 }, true)} />
         <span className="unit">%</span>
       </div>
       <div className="mtop">
@@ -566,7 +573,13 @@ function AudioPanel({ state, dispatch }) {
         {pct !== 100 && <button className="mini wide" onClick={() => patch({ volume: 1 })}>Reset</button>}
       </div>
       <div className="hint left">{note}</div>
-      {source && (
+      {resetLane && Math.abs(laneVol - 1) > 0.005 && (
+        <div className="mtop">
+          <span className="hint left">This lane also has an older volume setting of {Math.round(laneVol * 100)}%.</span>
+          <button className="mini wide" onClick={resetLane}>Set it to 100%</button>
+        </div>
+      )}
+      {source && !many && (
         <>
           <div className="mtop">
             <span className="mlabel">Match loudness to</span>
@@ -592,6 +605,8 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
   const idx = lay.findIndex((c) => c.id === only)
   const oclip = overlayLayout(state.overlayClips).find((c) => c.id === only)
   const clip = lay[idx] || oclip
+  // only sound is selected (several attached streams and / or audio clips): their volume is edited together
+  const allAudio = state.selection.length > 1 && state.selection.every((id) => id.startsWith('sa:') || state.audioClips.some((x) => x.id === id))
   const media = clip && state.media.find((m) => m.id === clip.mediaId)
   const cur = clip && clip.transition && clip.transition.name
   // how big (in %) the picture must be to cover the whole frame
@@ -623,8 +638,8 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
         {state.selection.length === 0 && (
           <div className="hint">Select a clip on the timeline to edit it or give it a transition from the previous clip. Drag a box around items to select several.</div>
         )}
-        {state.selection.length > 1 && !clip && <div className="hint">{state.selection.length} items selected. Use the timeline toolbar to Group, Ungroup or Delete them.</div>}
-        {state.selection.length === 1 && !clip && <AudioPanel state={state} dispatch={dispatch} />}
+        {state.selection.length > 1 && !clip && !allAudio && <div className="hint">{state.selection.length} items selected. Use the timeline toolbar to Group, Ungroup or Delete them.</div>}
+        {!clip && (state.selection.length === 1 || allAudio) && <AudioPanel state={state} dispatch={dispatch} />}
         {clip && (
           <>
             <div className="insp-clip">{clip.text ? 'Text' : media ? media.name : 'Clip'}</div>

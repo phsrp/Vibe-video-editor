@@ -4,7 +4,7 @@ import Icon from './Icon.jsx'
 import Wave from './Wave.jsx'
 import MiniMap from './MiniMap.jsx'
 import { maskSpan } from './masks.js'
-import { srcAt, tlOf, speedOf, lenOf, layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKeys, audioSource, fmtTime, fmtDur, toUrl, uid, hasAttached, canGroup, canUngroup, hasClipboard } from './state.js'
+import { srcAt, tlOf, speedOf, lenOf, layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKeys, audioSource, fmtTime, fmtDur, toUrl, uid, hasAttached, canGroup, canUngroup, hasClipboard, streamAudioOf } from './state.js'
 import { labelColor } from './labels.js'
 
 const TRACK_PAD = 12
@@ -20,8 +20,8 @@ const groupColor = (g) => {
 }
 
 // The left part of a row: a grip to drag the row up or down, the name (double-click to rename) and,
-// for audio rows, mute and volume.
-function RowLabel({ name, sub, volume, mute, onVolume, onMute, onRemove, onRename, onGrip, locked, hidden, onLock, onHide }) {
+// for audio rows, mute. (The volume belongs to each audio clip: select it and use the inspector.)
+function RowLabel({ name, sub, mute, onMute, onRemove, onRename, onGrip, locked, hidden, onLock, onHide }) {
   const [edit, setEdit] = useState(false)
   const done = (v) => {
     setEdit(false)
@@ -66,11 +66,10 @@ function RowLabel({ name, sub, volume, mute, onVolume, onMute, onRemove, onRenam
         )}
       </div>
       {sub && <div className="tl-sub" title={sub}>{sub}</div>}
-      {onVolume && <input type="range" min="0" max="2" step="0.01" value={volume} className={volume > 1 ? 'boosted' : ''} title={`Volume ${Math.round(volume * 100)}% (up to 200%)`} onChange={(e) => onVolume(+e.target.value)} />}
     </div>
   )
 }
-export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, freezeKey, groupKey, ungroupKey, onFreeze, onKeybinds, snapOn, setSnapOn, onCopy, fitRef, miniOn, setMiniOn, rec, onRecord }) {
+export default function Timeline({ height, state, dispatch, zoom, setZoom, splitKey, freezeKey, groupKey, ungroupKey, onFreeze, onKeybinds, snapOn, setSnapOn, onCopy, fitRef, miniOn, setMiniOn, rec, onRecord }) {
   const scrollRef = useRef(null)
   const innerRef = useRef(null)
   const trackRef = useRef(null) // the ruler lane: reference for time <-> pixel conversion
@@ -864,15 +863,14 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
       <div className={'tl-row' + rowClass(key)} key={key} ref={rowRef(key)} style={{ height: H_AUDIO }}>
         <RowLabel
           name={st.name || streamName(n)}
-          volume={st.volume}
           mute={st.mute}
-          onVolume={(v) => dispatch({ type: 'setStream', n, patch: { volume: v } })}
           onMute={() => dispatch({ type: 'setStream', n, patch: { mute: !st.mute } })}
           onRename={(name) => dispatch({ type: 'renameRow', key, name })}
           onGrip={(e) => startRowDrag(e, key)}
           {...rowFlags(key)}
         />
-        <div className="lane">
+        {/* an audio file dropped on a video's sound lane goes to the first audio track that has room there (or a new one) */}
+        <div className="lane" onDragOver={(e) => hasMedia(e) && e.preventDefault()} onDrop={(e) => onAudioDrop(e, null)}>
           <div className="lane-inner" style={{ left: TRACK_PAD }}>
             {clips.map((c) => {
               const m = mediaOf(c)
@@ -882,7 +880,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                 <div
                   key={c.id}
                   data-sel={sid}
-                  className={'aclip stream' + (st.mute ? ' muted' : '') + (sel.has(sid) ? ' selected' : '')}
+                  className={'aclip stream' + (st.mute || streamAudioOf(c, n).mute ? ' muted' : '') + (sel.has(sid) ? ' selected' : '')}
                   style={{ left: c.start * zoom, width: Math.max(2, c.dur * zoom) }}
                   onPointerDown={(e) => clickStream(e, c, n)}
                 >
@@ -904,9 +902,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
       <div className={'tl-row' + rowClass(key)} key={key} ref={rowRef(key)} style={{ height: H_AUDIO }}>
         <RowLabel
           name={t.name}
-          volume={t.volume}
           mute={t.mute}
-          onVolume={(v) => dispatch({ type: 'setTrack', id: t.id, patch: { volume: v } })}
           onMute={() => dispatch({ type: 'setTrack', id: t.id, patch: { mute: !t.mute } })}
           onRemove={() => dispatch({ type: 'removeAudioTrack', id: t.id })}
           onRename={(name) => dispatch({ type: 'renameRow', key, name })}
@@ -923,7 +919,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
                   <div
                     key={a.id}
                     data-sel={a.id}
-                    className={'aclip' + (a.stream != null ? ' detached' : ' free') + (t.mute ? ' muted' : '') + (sel.has(a.id) ? ' selected' : '') + (a.groupId ? ' grouped' : '')}
+                    className={'aclip' + (a.stream != null ? ' detached' : ' free') + (t.mute || a.mute ? ' muted' : '') + (sel.has(a.id) ? ' selected' : '') + (a.groupId ? ' grouped' : '')}
                     style={{ left: a.start * zoom, width: Math.max(6, a.dur * zoom), '--gcol': a.groupId ? groupColor(a.groupId) : undefined, '--lbl': labelColor(a) }}
                     onPointerDown={(e) => startMoveAudio(e, a)}
                     title={clipAudioName(a)}
@@ -949,7 +945,7 @@ export default function Timeline({ state, dispatch, zoom, setZoom, splitKey, fre
   }
 
   return (
-    <div className="timeline">
+    <div className="timeline" style={height ? { height } : undefined}>
       <div className="tl-toolbar">
         <button onClick={() => dispatch({ type: 'split', t: state.playhead })} title={'Split at the playhead' + (splitKey ? ' (' + splitKey + ')' : '')}>
           <Icon name="scissors" /> Split

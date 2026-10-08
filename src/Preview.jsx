@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createRenderer } from './glRenderer.js'
 import { evalTransform, evalWarp } from './motion.js'
 import { maskAt } from './masks.js'
-import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl, srcAt, speedOf, aspectRatio, previewSize } from './state.js'
+import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl, srcAt, speedOf, aspectRatio, previewSize, streamAudioOf } from './state.js'
 import WarpOverlay from './WarpOverlay.jsx'
 import { drawText, loadFont } from './textRender.js'
 import TransformOverlay from './TransformOverlay.jsx'
@@ -38,6 +38,15 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
     let raf
     let clock = { ms: 0, t0: 0, seek: -1, playing: false }
     let haveFrame = false
+    let missingSince = 0 // since when a needed picture has not been ready (ms clock of requestAnimationFrame)
+
+    // a clip that let go of its video file gets it back (see "far from the playhead" below)
+    function ensureSrc(e, media) {
+      if (e.kind === 'video' && !e.srcPath) {
+        e.srcPath = media.path
+        e.el.src = toUrl(media.path)
+      }
+    }
 
     function getEl(clip, media) {
       let e = els.current.get(clip.id)
@@ -98,7 +107,8 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
             const nx = clips[i + 1]
             if (nx && nx.ov > 0 && t >= nx.start) fade *= 1 - (t - nx.start) / nx.ov
             const st = s.streamSettings[n] || {}
-            want.set(key, { file: f, src: srcAt(c, t), rate: speedOf(c), vol: st.mute ? 0 : (st.volume ?? 1) * fade })
+            const own = streamAudioOf(c, n) // this clip's own volume
+            want.set(key, { file: f, src: srcAt(c, t), rate: speedOf(c), vol: st.mute || own.mute ? 0 : (st.volume ?? 1) * own.volume * fade })
           } else if (upcoming) soon.push({ key, file: f, src: c.in })
         })
       })
@@ -109,7 +119,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         valid.add(key)
         const tr = s.audioTracks.find((x) => x.id === a.trackId)
         const active = t >= a.start && t < a.start + a.dur
-        if (active && !hid.has('a:' + a.trackId)) want.set(key, { file, src: a.in + (t - a.start), vol: tr ? (tr.mute ? 0 : tr.volume) : 1 })
+        if (active && !hid.has('a:' + a.trackId)) want.set(key, { file, src: a.in + (t - a.start), vol: (tr ? (tr.mute ? 0 : tr.volume) : 1) * (a.mute ? 0 : a.volume ?? 1) })
         else if (a.start > t && a.start - t < 3) soon.push({ key, file, src: a.in })
       }
       for (const [key, w] of want) {
@@ -127,8 +137,13 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         const el = getAudio(u.key, u.file).el
         if (el.paused && el.readyState > 0 && Math.abs(el.currentTime - u.src) > 0.05 && !el.seeking) el.currentTime = u.src
       }
+      const soonKeys = new Set(soon.map((u) => u.key))
+      const nowMs = performance.now()
       for (const [key, e] of aels.current) {
-        if (!valid.has(key)) {
+        // a sound that has been idle for a while lets go of its file (hundreds of open files can make the browser give up)
+        if (want.has(key) || soonKeys.has(key)) e.idle = 0
+        else if (!e.idle) e.idle = nowMs
+        if (!valid.has(key) || (e.idle && nowMs - e.idle > 10000 && e.el.paused)) {
           e.el.pause()
           e.el.removeAttribute('src')
           e.el.load()
@@ -309,12 +324,28 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       for (const [id, e] of els.current) {
         if (e.kind === 'video' && !actIds.has(id) && !e.el.paused) e.el.pause()
       }
+      // Clips far from the playhead let go of their video file. A project with many clips would otherwise keep a video
+      // decoder open for every one of them, and the browser runs out: seeks then never finish and the picture freezes.
+      const span = new Map()
+      for (const c of clips) span.set(c.id, [c.start, c.start + c.dur])
+      for (const c of overlays) span.set(c.id, [c.start, c.start + c.dur])
+      for (const [id, e] of els.current) {
+        const sp = span.get(id)
+        if (e.kind !== 'video' || !e.srcPath || actIds.has(id) || !sp) continue
+        if (sp[0] > t + 10 || sp[1] < t - 6) {
+          e.el.pause()
+          e.el.removeAttribute('src')
+          e.el.load()
+          e.srcPath = null
+        }
+      }
       // overlay clips about to start: get their first frame ready
       for (const c of overlays) {
         if (c.start > t && c.start - t < 3) {
           const m = mediaOf(c)
           if (!m) continue
           const e = getEl(c, m)
+          ensureSrc(e, m)
           if (e.kind === 'video' && e.el.paused && !c.reverse && e.el.readyState > 0 && Math.abs(e.el.currentTime - c.in) > 0.05 && !e.el.seeking) e.el.currentTime = c.in
         }
       }
@@ -322,7 +353,24 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       for (const key of videoRowsBottomUp(s)) if (layerFor[key]) layers.push(layerFor[key])
       // While a video is still seeking (for example right after pausing) keep the picture that is already
       // on screen instead of drawing a black or half-finished frame: that was the blink.
-      if (missing && haveFrame) return
+      // (but never for long: a stuck seek gets the video reloaded, and after a few seconds we stop holding the old picture)
+      if (missing) {
+        if (!missingSince) missingSince = now
+        const held = now - missingSince
+        if (held > 800) {
+          for (const [id, e] of els.current) {
+            if (e.kind === 'video' && actIds.has(id) && e.el.readyState < 2 && now - (e.reloaded || 0) > 2000) {
+              e.reloaded = now
+              e.srcPath = null // the next syncClip sets the source again, which loads the video afresh
+            }
+          }
+        }
+        window.__held = held // developer self-test
+        if (haveFrame && held < 4000) return
+      } else {
+        missingSince = 0
+        window.__held = 0
+      }
       if (!layers.length) {
         haveFrame = false
         return renderer.clear()
@@ -337,6 +385,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         const nm = mediaOf(next)
         if (nm) {
           const ne = getEl(next, nm)
+          ensureSrc(ne, nm)
           if (ne.kind === 'video' && ne.el.paused && !next.reverse && ne.el.readyState > 0 && Math.abs(ne.el.currentTime - next.in) > 0.05 && !ne.el.seeking)
             ne.el.currentTime = next.in
         }

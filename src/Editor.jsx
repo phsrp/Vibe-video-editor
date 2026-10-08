@@ -409,6 +409,38 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     else dispatch({ type: 'addClip', mediaId: m.id })
   }
 
+  // the timeline's height: drag the bar above it (the preview and the panels get smaller to make room); remembered
+  const [tlHeight, setTlHeightState] = useState(() => {
+    try {
+      const v = +localStorage.getItem('vibe.tlHeight')
+      return v >= 140 ? v : 340
+    } catch {
+      return 340
+    }
+  })
+  const setTlHeight = (h) => {
+    const v = Math.round(Math.max(140, Math.min(h, window.innerHeight - 260)))
+    setTlHeightState(v)
+    try {
+      localStorage.setItem('vibe.tlHeight', String(v))
+    } catch {}
+  }
+  const startResize = (e) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const y0 = e.clientY
+    const h0 = tlHeight
+    const move = (ev) => setTlHeight(h0 + (y0 - ev.clientY))
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.style.cursor = ''
+    }
+    document.body.style.cursor = 'ns-resize'
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
   // the tutorial: shown by itself the first time the video editor is opened, and again from the Tutorial button
   const appRef = useRef(null)
   const [tour, setTour] = useState(false)
@@ -544,7 +576,9 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         />
       </div>
 
+      <div className="tl-split" onPointerDown={startResize} onDoubleClick={() => setTlHeight(340)} title="Drag up or down to make the timeline bigger or smaller (double-click to reset)" />
       <Timeline
+        height={tlHeight}
         state={state}
         dispatch={dispatch}
         zoom={zoom}
