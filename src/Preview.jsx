@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createRenderer } from './glRenderer.js'
 import { evalTransform, evalWarp } from './motion.js'
 import { maskAt } from './masks.js'
-import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl, srcAt, speedOf, aspectRatio, previewSize, streamAudioOf } from './state.js'
+import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl, srcAt, speedOf, aspectRatio, previewSize, streamAudioOf, cleanActive } from './state.js'
 import WarpOverlay from './WarpOverlay.jsx'
 import { drawText, loadFont } from './textRender.js'
 import TransformOverlay from './TransformOverlay.jsx'
@@ -24,6 +24,9 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
   const rendererRef = useRef(null)
   const stateRef = useRef(state)
   stateRef.current = state
+  const qualityRef = useRef('full')
+  const autoLevelRef = useRef(1)
+  const setAutoLevelRef = useRef(null)
   const els = useRef(new Map()) // clipId -> {el, kind, media}
   const aels = useRef(new Map()) // audio key -> {el}
 
@@ -38,13 +41,20 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
     let raf
     let clock = { ms: 0, t0: 0, seek: -1, playing: false }
     let haveFrame = false
+    let lastFrameAt = 0 // for the Auto preview quality
+    let slowAvg = 16
+    let lastStep = 0
     let missingSince = 0 // since when a needed picture has not been ready (ms clock of requestAnimationFrame)
+
+    // which file the preview plays: the smooth copy of a big video when there is one (the export always uses the original),
+    // but the original while the preview is zoomed in, where the sharper picture matters (masks)
+    const playPath = (media) => (media.proxy && zoomRef.current <= 1.01 ? media.proxy : media.path)
 
     // a clip that let go of its video file gets it back (see "far from the playhead" below)
     function ensureSrc(e, media) {
       if (e.kind === 'video' && !e.srcPath) {
-        e.srcPath = media.path
-        e.el.src = toUrl(media.path)
+        e.srcPath = playPath(media)
+        e.el.src = toUrl(e.srcPath)
       }
     }
 
@@ -57,19 +67,37 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         el.preload = 'auto'
         el.playsInline = true
         el.muted = true // sound comes from the separately extracted audio streams
-        el.src = toUrl(media.path)
+        el.src = toUrl(playPath(media))
       } else {
         el = new Image()
         el.src = toUrl(media.path)
       }
-      e = { el, kind: media.type, media, srcPath: media.path }
+      e = { el, kind: media.type, media, srcPath: media.type === 'video' ? playPath(media) : media.path }
       els.current.set(clip.id, e)
       return e
+    }
+
+    // Clean-up of a clip's sound (noise reduction, rumble, voice preset): ffmpeg renders a cleaned copy in the background
+    // (the export uses the same chain). Until it is ready the plain sound plays.
+    const cleaned = new Map() // "file|settings" -> path of the cleaned copy, or null while it is being made
+    function cleanedFile(file, clean) {
+      if (!file || !cleanActive(clean)) return file
+      const key = file + '|' + JSON.stringify([clean.nr || 0, !!clean.rumble, clean.voice || ''])
+      if (!cleaned.has(key)) {
+        cleaned.set(key, null)
+        window.api.cleanAudio({ file, clean }).then((p) => cleaned.set(key, p || file)).catch(() => cleaned.set(key, file))
+      }
+      return cleaned.get(key) || file
     }
 
     // ---- audio: every video audio stream and every audio clip plays from its own <audio>
     function getAudio(key, file) {
       let e = aels.current.get(key)
+      if (e && e.file !== file) {
+        // the cleaned copy became ready (or the settings changed): switch the file, the sync code puts it at the right time
+        e.file = file
+        e.el.src = toUrl(file)
+      }
       if (!e) {
         const el = new Audio()
         el.preload = 'auto'
@@ -79,7 +107,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         const gain = ctx.createGain()
         ctx.createMediaElementSource(el).connect(gain)
         gain.connect(ctx.destination)
-        e = { el, gain }
+        e = { el, gain, file }
         aels.current.set(key, e)
       }
       return e
@@ -107,9 +135,9 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
             const nx = clips[i + 1]
             if (nx && nx.ov > 0 && t >= nx.start) fade *= 1 - (t - nx.start) / nx.ov
             const st = s.streamSettings[n] || {}
-            const own = streamAudioOf(c, n) // this clip's own volume
-            want.set(key, { file: f, src: srcAt(c, t), rate: speedOf(c), vol: st.mute || own.mute ? 0 : (st.volume ?? 1) * own.volume * fade })
-          } else if (upcoming) soon.push({ key, file: f, src: c.in })
+            const own = streamAudioOf(c, n) // this clip's own volume and clean-up
+            want.set(key, { file: cleanedFile(f, own.clean), src: srcAt(c, t), rate: speedOf(c), vol: st.mute || own.mute ? 0 : (st.volume ?? 1) * own.volume * fade })
+          } else if (upcoming) soon.push({ key, file: cleanedFile(f, streamAudioOf(c, n).clean), src: c.in })
         })
       })
       for (const a of audioLayout(s.audioClips)) {
@@ -119,8 +147,8 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         valid.add(key)
         const tr = s.audioTracks.find((x) => x.id === a.trackId)
         const active = t >= a.start && t < a.start + a.dur
-        if (active && !hid.has('a:' + a.trackId)) want.set(key, { file, src: a.in + (t - a.start), vol: (tr ? (tr.mute ? 0 : tr.volume) : 1) * (a.mute ? 0 : a.volume ?? 1) })
-        else if (a.start > t && a.start - t < 3) soon.push({ key, file, src: a.in })
+        if (active && !hid.has('a:' + a.trackId)) want.set(key, { file: cleanedFile(file, a.clean), src: a.in + (t - a.start), vol: (tr ? (tr.mute ? 0 : tr.volume) : 1) * (a.mute ? 0 : a.volume ?? 1) })
+        else if (a.start > t && a.start - t < 3) soon.push({ key, file: cleanedFile(file, a.clean), src: a.in })
       }
       for (const [key, w] of want) {
         const ae = getAudio(key, w.file)
@@ -193,7 +221,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       if (e.kind === 'video') {
         const v = e.el
         let src = srcAt(clip, t)
-        let want = media.path
+        let want = playPath(media)
         let canPlay = true
         if (clip.reverse) {
           const pp = proxyFor(clip, media)
@@ -230,6 +258,22 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         return
       }
       const s = stateRef.current
+      // Auto quality: while playing, if frames come slower than about 25 per second, draw a bit coarser (at most every 2 s)
+      if (qualityRef.current === 'auto') {
+        const dt = now - lastFrameAt
+        lastFrameAt = now
+        if (s.playing && dt > 0 && dt < 500) {
+          slowAvg = slowAvg * 0.92 + dt * 0.08
+          if (slowAvg > 42 && autoLevelRef.current < 3 && now - lastStep > 2000) {
+            lastStep = now
+            slowAvg = 16
+            setAutoLevelRef.current(autoLevelRef.current + 1)
+          }
+        } else if (!s.playing) {
+          slowAvg = 16
+          if (autoLevelRef.current !== 1) setAutoLevelRef.current(1)
+        }
+      } else lastFrameAt = now
       const clips = layout(s.clips)
       const overlays = overlayLayout(s.overlayClips)
       const mainTotal = totalDuration(s.clips)
@@ -357,7 +401,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       if (missing) {
         if (!missingSince) missingSince = now
         const held = now - missingSince
-        if (held > 800) {
+        if (held > 1200) {
           for (const [id, e] of els.current) {
             if (e.kind === 'video' && actIds.has(id) && e.el.readyState < 2 && now - (e.reloaded || 0) > 2000) {
               e.reloaded = now
@@ -417,8 +461,30 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
   const zoomRef = useRef(1)
   const [cw0, ch0] = previewSize(ratio)
   const sharp = Math.min(3, Math.max(1, zoom)) // the picture is drawn finer while zoomed in
-  const cw = Math.round(cw0 * sharp)
-  const ch = Math.round(ch0 * sharp)
+  // preview quality: how finely the picture is drawn (a lower one plays smoother on a slow PC). Auto starts full and
+  // steps down by itself while playback cannot keep up, then goes back to full when paused.
+  const [quality, setQualityState] = useState(() => {
+    try {
+      const q = localStorage.getItem('vibe.previewQuality')
+      return ['full', 'half', 'quarter', 'auto'].includes(q) ? q : 'full'
+    } catch {
+      return 'full'
+    }
+  })
+  const [autoLevel, setAutoLevel] = useState(1) // 1 full, 2 half, 3 quarter
+  const setQuality = (q) => {
+    setQualityState(q)
+    setAutoLevel(1)
+    try {
+      localStorage.setItem('vibe.previewQuality', q)
+    } catch {}
+  }
+  qualityRef.current = quality
+  autoLevelRef.current = autoLevel
+  setAutoLevelRef.current = setAutoLevel
+  const qScale = quality === 'full' ? 1 : quality === 'half' ? 0.5 : quality === 'quarter' ? 0.25 : [1, 0.5, 0.25][autoLevel - 1]
+  const cw = Math.max(64, Math.round(cw0 * sharp * qScale))
+  const ch = Math.max(36, Math.round(ch0 * sharp * qScale))
   const box = { w: fitBox.w * zoom, h: fitBox.h * zoom }
   useEffect(() => {
     const el = areaRef.current
@@ -511,6 +577,12 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
       <span title="Ctrl + mouse wheel zooms towards the pointer; drag with the middle mouse button to move around">{Math.round(zoom * 100)}%</span>
       <button className="mini" onClick={() => setZoom(zoomRef.current * 1.5)} title="Zoom in the preview (Ctrl + mouse wheel zooms towards the pointer)">+</button>
       <button className="mini" onClick={() => setZoom(1)} title="Fit the picture in the preview">Fit</button>
+      <select value={quality} onChange={(e) => setQuality(e.target.value)} title="Preview quality. Lower is smoother on a slow PC. It does not change the export. Auto lowers it by itself while playback stutters.">
+        <option value="full">Full</option>
+        <option value="half">Half</option>
+        <option value="quarter">Quarter</option>
+        <option value="auto">Auto</option>
+      </select>
     </div>
     </div>
   )

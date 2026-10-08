@@ -91,6 +91,35 @@ export default function ImageEditor({ tabId, active, initial, binds, onMeta, onN
     items.forEach((it) => it.type === 'image' && dispatch({ type: 'imgAddImage', mediaId: it.id, fitCanvas: true }))
     if (items.some((it) => it.type !== 'image')) flash('Only pictures can be layers here: videos were skipped.')
   }
+  // Ctrl+V: a picture from the clipboard (a screenshot, "Copy image" in a browser, or a picture file copied in Explorer) becomes a layer
+  useEffect(() => {
+    const onPaste = async (e) => {
+      if (!activeRef.current) return
+      const tag = e.target && e.target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      const files = [...((e.clipboardData && e.clipboardData.files) || [])].filter((f) => /^image\//.test(f.type))
+      if (!files.length) return
+      e.preventDefault()
+      setBusy(true)
+      try {
+        const items = []
+        for (const f of files) {
+          const real = window.api.pathForFile(f) // a file copied in Explorer has a path; a screenshot does not
+          if (real) items.push(...(await window.api.describeFiles([real])))
+          else {
+            const item = await window.api.savePastedPicture({ data: await f.arrayBuffer(), ext: (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg') })
+            if (item) items.push(item)
+          }
+        }
+        addPictures(items)
+        if (items.length) flash(items.length === 1 ? 'Picture pasted as a new layer.' : `${items.length} pictures pasted as new layers.`)
+      } finally {
+        setBusy(false)
+      }
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [])
   const importPictures = async () => {
     setBusy(true)
     try {

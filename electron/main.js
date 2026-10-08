@@ -37,6 +37,8 @@ async function probe(file) {
     duration: isImage ? 5 : duration,
     width: video ? video.width : 0,
     height: video ? video.height : 0,
+    codec: video ? video.codec_name : '',
+    bitrate: parseInt(info.format.bit_rate, 10) || 0,
     audioStreams: audio.map((s, i) => ({
       index: s.index,
       n: i,
@@ -193,8 +195,124 @@ async function describeFile(file) {
   // audio files are filled in later (see extractAudioFiles); null = not ready yet
   const pending = info.type === 'video' && info.audioStreams.length > 0
   const audioFiles = pending ? info.audioStreams.map(() => null) : []
-  return { id, path: file, name: path.basename(file), thumb, audioFiles, audioPending: pending, ...info }
+  // a smooth copy for the preview of big videos: used when it exists, made in the background when it is wanted
+  const proxy = fs.existsSync(proxyFile(id)) ? proxyFile(id) : null
+  const proxyPending = !proxy && needsProxy(info)
+  if (proxyPending) queueProxy(file, id, info.duration)
+  return { id, path: file, name: path.basename(file), thumb, audioFiles, audioPending: pending, proxy, proxyPending, ...info }
 }
+
+// ---- smooth copies ("proxies") of big videos
+// A 4K or very high bit-rate video is slow to play and to jump around in. For those, a small and easy-to-seek copy
+// (at most 1280 pixels, a keyframe every 12 frames) is made in the background and used by the PREVIEW only:
+// the export always reads the original file. Settings > Smooth preview: Auto / Always / Off.
+const proxyDir = () => {
+  const d = path.join(app.getPath('userData'), 'proxies')
+  fs.mkdirSync(d, { recursive: true })
+  return d
+}
+const proxyFile = (id) => path.join(proxyDir(), id + '.mp4')
+const needsProxy = (info) => {
+  if (process.env.VIBE_SELFTEST && !process.env.VIBE_PROXY_TEST) return false
+  const mode = (readSettings().proxyMode || 'auto')
+  if (mode === 'off' || info.type !== 'video') return false
+  if (mode === 'always') return true
+  return Math.max(info.width, info.height) > 1920 || (info.bitrate || 0) > 35e6
+}
+const proxyJobs = new Set()
+const proxyQueue = []
+let proxyRunning = false
+const sendProxy = (d) => {
+  try {
+    mainWindow && mainWindow.webContents.send('proxy:event', d)
+  } catch {}
+}
+function queueProxy(file, id, duration) {
+  if (proxyJobs.has(id) || fs.existsSync(proxyFile(id))) return
+  proxyJobs.add(id)
+  proxyQueue.push({ file, id, duration })
+  pumpProxy()
+}
+async function pumpProxy() {
+  if (proxyRunning) return
+  proxyRunning = true
+  while (proxyQueue.length) {
+    const j = proxyQueue.shift()
+    try {
+      await makeProxy(j)
+    } catch (e) {
+      console.error('proxy failed:', String(e.message || e).slice(0, 300))
+      sendProxy({ id: j.id, failed: true })
+    }
+    proxyJobs.delete(j.id)
+  }
+  proxyRunning = false
+}
+function makeProxy({ file, id, duration }) {
+  return new Promise((resolve, reject) => {
+    const out = proxyFile(id)
+    const tmp = out + '.part.mp4'
+    const scale = "scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))'"
+    const args = ['-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', file, '-map', '0:v:0', '-an', '-vf', scale, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24', '-g', '12', '-bf', '0', '-pix_fmt', 'yuv420p', '-fps_mode', 'passthrough', '-movflags', '+faststart', tmp]
+    const p = require('child_process').spawn(ffmpegPath, args, { windowsHide: true })
+    try {
+      require('os').setPriority(p.pid, require('os').constants.priority.PRIORITY_BELOW_NORMAL) // do not slow down what the user is doing
+    } catch {}
+    let buf = ''
+    let err = ''
+    let last = -1
+    p.stdout.on('data', (d) => {
+      buf += d
+      const lines = buf.split('\n')
+      buf = lines.pop()
+      for (const l of lines) {
+        const m = /^out_time_(?:us|ms)=(\d+)/.exec(l.trim())
+        if (!m || !(duration > 0)) continue
+        const pct = Math.min(99, Math.round(((+m[1] / 1e6) / duration) * 100))
+        if (pct !== last) {
+          last = pct
+          sendProxy({ id, pct })
+        }
+      }
+    })
+    p.stderr.on('data', (d) => (err = (err + d).slice(-2000)))
+    p.on('error', reject)
+    p.on('close', (code) => {
+      if (code === 0) {
+        try {
+          fs.renameSync(tmp, out)
+        } catch (e) {
+          return reject(e)
+        }
+        sendProxy({ id, pct: 100, path: out })
+        resolve()
+      } else {
+        fs.rmSync(tmp, { force: true })
+        reject(new Error(err || 'ffmpeg exited with code ' + code))
+      }
+    })
+  })
+}
+// which of these media already have a smooth copy: {id: path or null}
+ipcMain.handle('proxy:status', (_e, ids) => Object.fromEntries((ids || []).map((id) => [id, fs.existsSync(proxyFile(String(id).replace(/[^\w]/g, ''))) ? proxyFile(String(id).replace(/[^\w]/g, '')) : null])))
+ipcMain.handle('proxy:info', () => {
+  let count = 0
+  let bytes = 0
+  try {
+    for (const f of fs.readdirSync(proxyDir())) {
+      if (!f.endsWith('.mp4') || f.endsWith('.part.mp4')) continue
+      count++
+      bytes += fs.statSync(path.join(proxyDir(), f)).size
+    }
+  } catch {}
+  return { count, bytes, making: proxyJobs.size }
+})
+ipcMain.handle('proxy:clear', () => {
+  try {
+    for (const f of fs.readdirSync(proxyDir())) if (!proxyJobs.size || f.endsWith('.part.mp4') === false) fs.rmSync(path.join(proxyDir(), f), { force: true })
+  } catch {}
+  return true
+})
 
 // Freeze frame: save one exact frame of a video as a PNG and import it as an image.
 ipcMain.handle('media:freeze', async (_e, { file, time, label }) => {
@@ -511,7 +629,7 @@ ipcMain.handle('recent:remove', (_e, file) => {
 
 // ---- settings (kept in the user's app-data)
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json')
-const DEFAULT_SETTINGS = { autoUpdate: true }
+const DEFAULT_SETTINGS = { autoUpdate: true, proxyMode: 'auto' }
 function readSettings() {
   try {
     return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) }
@@ -788,6 +906,43 @@ ipcMain.handle('voice:save', async (_e, { data }) => {
   await run(ffmpegPath, ['-y', '-v', 'error', '-i', webm, '-vn', '-c:a', 'aac', '-b:a', '192k', m4a])
   fs.rmSync(webm, { force: true })
   return m4a
+})
+// Audio cleanup for the PREVIEW: the sound file is rendered once with the clean-up chain (the export uses the same chain),
+// and kept for later. Returns the path of the cleaned file; the same request twice shares one job.
+const cleanJobs = new Map()
+ipcMain.handle('audio:clean', (_e, { file, clean }) => {
+  const ac = require('./audioClean.js')
+  if (!ac.cleanChain(clean) || !file || !fs.existsSync(file)) return null
+  const jobKey = crypto.createHash('sha1').update([file, fs.statSync(file).mtimeMs, JSON.stringify([clean.nr || 0, !!clean.rumble, clean.voice || ''])].join('|')).digest('hex').slice(0, 16)
+  if (cleanJobs.has(jobKey)) return cleanJobs.get(jobKey)
+  const job = (async () => {
+    const dir = path.join(app.getPath('userData'), 'cleaned')
+    fs.mkdirSync(dir, { recursive: true })
+    const out = path.join(dir, jobKey + '.m4a')
+    if (fs.existsSync(out)) return out
+    // how loud the noise of this sound is (the extracted sound of a video stream has one audio stream: number 0)
+    const nf = clean.nr > 0 ? await ac.estimateFloor(ffmpegPath, file, 0, 0, 0) : undefined
+    const tmp = out + '.part.m4a'
+    await run(ffmpegPath, ['-y', '-v', 'error', '-i', file, '-vn', '-af', ac.cleanChain(clean, nf), '-c:a', 'aac', '-b:a', '192k', tmp])
+    fs.renameSync(tmp, out)
+    return out
+  })()
+    .catch(() => null)
+    .finally(() => cleanJobs.delete(jobKey))
+  cleanJobs.set(jobKey, job)
+  return job
+})
+
+// a picture pasted from the clipboard (Ctrl+V in the image editor): saved as a file next to the projects so it stays usable
+ipcMain.handle('picture:savePasted', async (_e, { data, ext }) => {
+  const dir = path.join(projectsDir(), 'Pasted pictures')
+  fs.mkdirSync(dir, { recursive: true })
+  const d = new Date()
+  const p2 = (n) => String(n).padStart(2, '0')
+  const safeExt = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'].includes(String(ext).toLowerCase()) ? String(ext).toLowerCase() : 'png'
+  const file = path.join(dir, `Pasted ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}-${p2(d.getMinutes())}-${p2(d.getSeconds())}-${d.getMilliseconds()}.${safeExt}`)
+  fs.writeFileSync(file, Buffer.from(data))
+  return await describeFile(file)
 })
 ipcMain.handle('voice:folder', () => {
   const dir = path.join(projectsDir(), 'Voice-overs')

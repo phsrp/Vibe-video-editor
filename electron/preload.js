@@ -65,6 +65,17 @@ contextBridge.exposeInMainWorld('api', {
   libraryAdd: () => ipcRenderer.invoke('library:add'),
   saveImage: (o) => ipcRenderer.invoke('image:save', o),
   saveThumb: (o) => ipcRenderer.invoke('thumb:save', o),
+  savePastedPicture: (o) => ipcRenderer.invoke('picture:savePasted', o),
+  cleanAudio: (o) => ipcRenderer.invoke('audio:clean', o),
+  proxyInfo: () => ipcRenderer.invoke('proxy:info'),
+  proxyStatus: (ids) => ipcRenderer.invoke('proxy:status', ids),
+  proxyClear: () => ipcRenderer.invoke('proxy:clear'),
+  // smooth-preview copies being made in the background: {id, pct} while working, {id, pct:100, path} when done
+  onProxy: (cb) => {
+    const h = (_e, d) => cb(d)
+    ipcRenderer.on('proxy:event', h)
+    return () => ipcRenderer.removeListener('proxy:event', h)
+  },
   libraryDelete: (file) => ipcRenderer.invoke('library:delete', file),
   extractAudio: (file, id, streams) => ipcRenderer.invoke('media:extractAudio', { file, id, streams }),
   freezeFrame: (file, time, label) => ipcRenderer.invoke('media:freeze', { file, time, label }),

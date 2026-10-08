@@ -441,6 +441,38 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     window.addEventListener('pointerup', up)
   }
 
+  // smooth preview copies of big videos are made in the background: show how far they are, use them once they exist
+  const [proxyPct, setProxyPct] = useState({})
+  useEffect(
+    () =>
+      window.api.onProxy((d) => {
+        if (d.path || d.failed) {
+          if (d.path) dispatch({ type: 'updateMedia', id: d.id, patch: { proxy: d.path, proxyPending: false } })
+          else dispatch({ type: 'updateMedia', id: d.id, patch: { proxyPending: false } })
+          setProxyPct((p) => {
+            const n = { ...p }
+            delete n[d.id]
+            return n
+          })
+        } else setProxyPct((p) => ({ ...p, [d.id]: d.pct }))
+      }),
+    []
+  )
+
+  // (a safety net: also look now and then whether a copy that was announced before this project was listening is ready)
+  const pendingKey = state.media.filter((m) => m.proxyPending && !m.proxy).map((m) => m.id).join(',')
+  useEffect(() => {
+    if (!pendingKey) return
+    const ids = pendingKey.split(',')
+    const tick = async () => {
+      const found = await window.api.proxyStatus(ids)
+      for (const [id, path] of Object.entries(found)) if (path) dispatch({ type: 'updateMedia', id, patch: { proxy: path, proxyPending: false } })
+    }
+    tick()
+    const t = setInterval(tick, 2500)
+    return () => clearInterval(t)
+  }, [pendingKey])
+
   // the tutorial: shown by itself the first time the video editor is opened, and again from the Tutorial button
   const appRef = useRef(null)
   const [tour, setTour] = useState(false)
@@ -526,6 +558,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
                     {m.type === 'video' || m.type === 'image' ? ` · ${m.width}×${m.height}` : ''}
                     {m.type === 'video' && m.audioStreams.length ? ` · ${m.audioStreams.length} audio` : ''}
                     {m.audioPending ? ' · preparing audio…' : ''}
+                    {proxyPct[m.id] != null ? ` · smooth copy ${proxyPct[m.id]}%` : m.proxy ? ' · smooth copy' : m.proxyPending ? ' · smooth copy queued' : ''}
                     {m.missing ? ' · file missing' : ''}
                   </div>
                 </div>

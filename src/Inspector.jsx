@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { layout, overlayLayout, soleVideoClip, srcAt, tlOf, speedOf, fmtDur, aspectRatio, streamAudioOf, audioClipVol } from './state.js'
+import { layout, overlayLayout, soleVideoClip, srcAt, tlOf, speedOf, fmtDur, aspectRatio, streamAudioOf, audioClipVol, cleanActive } from './state.js'
 import Icon from './Icon.jsx'
 import { PROPS, evalProp, keyAt, KEY_EPS } from './motion.js'
 import EaseEditor from './EaseEditor.jsx'
@@ -573,6 +573,28 @@ function AudioPanel({ state, dispatch }) {
         {pct !== 100 && <button className="mini wide" onClick={() => patch({ volume: 1 })}>Reset</button>}
       </div>
       <div className="hint left">{note}</div>
+      <div className="insp-section">Clean up the sound</div>
+      <FxSlider label="Noise reduction (hiss, fan, hum)" value={(st.clean && st.clean.nr) || 0} min={0} max={100} onStart={() => dispatch({ type: 'checkpoint' })} onChange={(v) => patch({ clean: { nr: v } }, true)} />
+      <label className="chk">
+        <input type="checkbox" checked={!!(st.clean && st.clean.rumble)} onChange={(e) => patch({ clean: { rumble: e.target.checked } })} />
+        Cut low rumble (wind, traffic, handling noise)
+      </label>
+      <div className="mtop">
+        <span className="mlabel">Voice</span>
+        <select value={(st.clean && st.clean.voice) || ''} onChange={(e) => patch({ clean: { voice: e.target.value } })}>
+          <option value="">As recorded</option>
+          <option value="clear">Clear voice</option>
+          <option value="podcast">Podcast (full and even)</option>
+          <option value="warm">Warm</option>
+          <option value="phone">Phone call</option>
+        </select>
+      </div>
+      {cleanActive(st.clean) && (
+        <>
+          <div className="hint left">Heard in the preview after a moment (a cleaned copy is made in the background) and used in the export.</div>
+          <button className="mini wide" onClick={() => patch({ clean: { nr: 0, rumble: false, voice: '' } })}>Remove the clean-up</button>
+        </>
+      )}
       {resetLane && Math.abs(laneVol - 1) > 0.005 && (
         <div className="mtop">
           <span className="hint left">This lane also has an older volume setting of {Math.round(laneVol * 100)}%.</span>

@@ -10,6 +10,7 @@ const { app, dialog, shell, ipcMain } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { spawn } = require('child_process')
+const { cleanChain, estimateFloor } = require('./audioClean.js')
 
 let job = null // {dir, procs:Set, cancelled, seg}
 
@@ -140,6 +141,8 @@ function buildFinal(plan, dir, info) {
         chain = `[${i}:a:${c.stream}]`
       }
       chain += `${script ? ',' : ''}aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS`
+      const cc = cleanChain(c.clean, c.cleanNf) // noise reduction / rumble / voice preset of this clip
+      if (cc) chain += ',' + cc
       if (c.reverse) chain += ',areverse'
       // speed: atempo only takes 0.5 to 2 at a time, so a bigger change is a chain of them
       let sp = c.speed || 1
@@ -328,6 +331,12 @@ function register({ ffmpegPath, getWindow }) {
   ipcMain.handle('export:final', async (e, plan) => {
     // Usually the files are given to ffmpeg as "-i" inputs. Windows allows about 32,000 characters for a command, so when
     // the project has too many pieces for that, the files are opened from the script file instead (no limit).
+    // clips with noise reduction: measure how loud their noise is first (the same way the preview does)
+    for (const t of plan.audio) {
+      for (const c of t.clips) {
+        if (c.clean && c.clean.nr > 0) c.cleanNf = await estimateFloor(ffmpegPath, c.file, c.stream, c.srcStart, c.srcDur || c.dur)
+      }
+    }
     let args = buildFinal(plan, job.dir, null)
     const tooLong = args.reduce((sum, a) => sum + String(a).length + 3, 0) > 28000
     if (tooLong || process.env.VIBE_FORCE_SCRIPT) args = buildFinal(plan, job.dir, await probePlan(ffmpegPath, plan))

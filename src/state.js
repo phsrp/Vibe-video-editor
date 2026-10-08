@@ -178,15 +178,29 @@ export const hasAttached = (c, media, n) =>
 
 // The volume and mute of ONE clip's sound: attached stream n of a video clip (clip.av[n]), or a detached audio clip
 // (its own volume / mute). It sits on top of the lane / track setting, which is 100% unless an older project changed it.
+// (clean = the clip's audio clean-up: {nr, rumble, voice}, see electron/audioClean.js)
 export const streamAudioOf = (c, n) => {
   const s = (c.av && c.av[n]) || {}
-  return { volume: s.volume ?? 1, mute: !!s.mute }
+  return { volume: s.volume ?? 1, mute: !!s.mute, clean: s.clean }
 }
-export const audioClipVol = (a) => ({ volume: a.volume ?? 1, mute: !!a.mute })
+export const audioClipVol = (a) => ({ volume: a.volume ?? 1, mute: !!a.mute, clean: a.clean })
 const avFields = (c, n) => {
   const s = streamAudioOf(c, n)
-  return s.volume !== 1 || s.mute ? { volume: s.volume, mute: s.mute } : {}
+  const o = {}
+  if (s.volume !== 1) o.volume = s.volume
+  if (s.mute) o.mute = true
+  if (s.clean) o.clean = s.clean
+  return o
 }
+// a change of one clip's audio settings; the clean-up part is merged into what is there
+const mergeAudio = (cur, patch) => {
+  const { clean, ...rest } = patch
+  const out = { ...cur, ...rest }
+  if (clean) out.clean = { ...(cur.clean || {}), ...clean }
+  return out
+}
+// is the clean-up of this clip switched on?
+export const cleanActive = (clean) => !!clean && (clean.nr > 0 || !!clean.rumble || !!clean.voice)
 // where a clip of length dur starting at s fits on a track (it moves to the end of whatever it would overlap)
 const nextFree = (clips, s, dur) => {
   for (const x of [...clips].sort((p, q) => p.start - q.start)) {
@@ -1199,10 +1213,10 @@ export function reducer(state, a) {
       const clips = state.clips.map((c) => {
         if (!per.has(c.id)) return c
         const av = { ...(c.av || {}) }
-        for (const n of per.get(c.id)) av[n] = { ...streamAudioOf(c, n), ...a.patch }
+        for (const n of per.get(c.id)) av[n] = mergeAudio((c.av && c.av[n]) || {}, a.patch)
         return { ...c, av }
       })
-      const audioClips = state.audioClips.map((x) => (idSet.has(x.id) ? { ...x, ...a.patch } : x))
+      const audioClips = state.audioClips.map((x) => (idSet.has(x.id) ? mergeAudio(x, a.patch) : x))
       return a.live ? { ...state, clips, audioClips } : commit(state, { clips, audioClips })
     }
 

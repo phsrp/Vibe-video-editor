@@ -499,3 +499,6 @@ input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var
 .tl-split::after { content: ''; position: absolute; left: 50%; top: 2px; width: 46px; height: 3px; margin-left: -23px; border-radius: 2px; background: var(--line); transition: background .15s; }
 .tl-split:hover::after { background: var(--accent); }
 .timeline { flex: none; }
+
+.set-col { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex: none; }
+.zoom-bar select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font-size: 12px; }

@@ -1,7 +1,7 @@
 // Video export, renderer side. See electron/exporter.js for the overall approach.
 import { drawText, loadFont } from './textRender.js'
 import { aspectRatio } from './state.js'
-import { speedOf, srcAt, layout, overlayLayout, totalDuration, projectDuration, videoRowsBottomUp, hasAttached, streamCount, toUrl, streamAudioOf, audioClipVol } from './state.js'
+import { speedOf, srcAt, layout, overlayLayout, totalDuration, projectDuration, videoRowsBottomUp, hasAttached, streamCount, toUrl, streamAudioOf, audioClipVol, cleanActive } from './state.js'
 import { createRenderer } from './glRenderer.js'
 import { evalTransform, evalWarp, hasTransform } from './motion.js'
 import { maskAt } from './masks.js'
@@ -137,7 +137,7 @@ export function buildPlan(state, s) {
       const own = streamAudioOf(c, n) // this clip's own volume
       if (own.mute || own.volume <= 0) return
       const next = lay[i + 1]
-      clips.push({ file: m.path, stream: n, srcStart: c.in, srcDur: c.out - c.in, speed: speedOf(c), reverse: !!c.reverse, dur: c.dur, at: c.start, vol: st.volume * own.volume, fadeIn: c.ov, fadeOut: next ? next.ov : 0 })
+      clips.push({ file: m.path, stream: n, srcStart: c.in, srcDur: c.out - c.in, speed: speedOf(c), reverse: !!c.reverse, dur: c.dur, at: c.start, vol: st.volume * own.volume, clean: cleanActive(own.clean) ? own.clean : undefined, fadeIn: c.ov, fadeOut: next ? next.ov : 0 })
     })
     if (clips.length) audio.push({ name: `Video audio ${n + 1}`, clips })
   }
@@ -150,7 +150,7 @@ export function buildPlan(state, s) {
       if (!m || m.missing) continue
       const own = audioClipVol(a)
       if (own.mute || own.volume <= 0) continue
-      clips.push({ file: m.path, stream: a.stream != null ? a.stream : 0, srcStart: a.in, dur: a.out - a.in, at: a.start, vol: t.volume * own.volume, fadeIn: 0, fadeOut: 0 })
+      clips.push({ file: m.path, stream: a.stream != null ? a.stream : 0, srcStart: a.in, dur: a.out - a.in, at: a.start, vol: t.volume * own.volume, clean: cleanActive(own.clean) ? own.clean : undefined, fadeIn: 0, fadeOut: 0 })
     }
     if (clips.length) audio.push({ name: t.name, clips })
   }
