@@ -4,6 +4,7 @@ import Preview from './Preview.jsx'
 import Timeline from './Timeline.jsx'
 import KeybindDialog from './KeybindDialog.jsx'
 import HistoryDialog from './HistoryDialog.jsx'
+import CaptionDialog from './CaptionDialog.jsx'
 import Inspector from './Inspector.jsx'
 import LibraryPanel from './LibraryPanel.jsx'
 import Icon from './Icon.jsx'
@@ -441,6 +442,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     window.addEventListener('pointerup', up)
   }
 
+  const [showCaptions, setShowCaptions] = useState(false)
   // smooth preview copies of big videos are made in the background: show how far they are, use them once they exist
   const [proxyPct, setProxyPct] = useState({})
   useEffect(
@@ -611,6 +613,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
 
       <div className="tl-split" onPointerDown={startResize} onDoubleClick={() => setTlHeight(340)} title="Drag up or down to make the timeline bigger or smaller (double-click to reset)" />
       <Timeline
+        onCaptions={() => setShowCaptions(true)}
         height={tlHeight}
         state={state}
         dispatch={dispatch}
@@ -636,6 +639,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         onOpenJson(json)
       }} />}
       {showKeys && <KeybindDialog binds={binds} setBinds={setBinds} onClose={() => setShowKeys(false)} />}
+      {showCaptions && <CaptionDialog state={state} dispatch={dispatch} onClose={() => setShowCaptions(false)} />}
       {tour && active && <Tour steps={VIDEO_STEPS} rootRef={appRef} onClose={closeTour} />}
     </div>
   )

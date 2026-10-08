@@ -502,3 +502,7 @@ input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var
 
 .set-col { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex: none; }
 .zoom-bar select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font-size: 12px; }
+
+/* captions dialog: progress bar */
+.cap-bar { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; margin: 10px 0 4px; }
+.cap-bar span { display: block; height: 100%; background: var(--accent); transition: width .3s; }

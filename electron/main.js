@@ -842,6 +842,91 @@ ipcMain.handle('models:download', async () => {
   })()
   return modelJob
 })
+// The speech-to-text model for captions: Whisper base (OpenAI, MIT), as ONNX files for the browser by the Hugging Face
+// "onnx-community" (Apache-2.0 / MIT). Downloaded once, on request, like the AI selection model; it runs on the graphics card.
+const WHISPER_URL = 'https://huggingface.co/onnx-community/whisper-base/resolve/1846881b6b3a3024392c1eea3ad983695bc23925/'
+const WHISPER_DIR = 'whisper/onnx-community/whisper-base/'
+const WHISPER_FILES = [
+  { name: WHISPER_DIR + 'added_tokens.json', url: WHISPER_URL + 'added_tokens.json', size: 34604, sha256: '' },
+  { name: WHISPER_DIR + 'config.json', url: WHISPER_URL + 'config.json', size: 2243, sha256: '' },
+  { name: WHISPER_DIR + 'generation_config.json', url: WHISPER_URL + 'generation_config.json', size: 3832, sha256: '' },
+  { name: WHISPER_DIR + 'merges.txt', url: WHISPER_URL + 'merges.txt', size: 493869, sha256: '' },
+  { name: WHISPER_DIR + 'normalizer.json', url: WHISPER_URL + 'normalizer.json', size: 52666, sha256: '' },
+  { name: WHISPER_DIR + 'preprocessor_config.json', url: WHISPER_URL + 'preprocessor_config.json', size: 339, sha256: '' },
+  { name: WHISPER_DIR + 'special_tokens_map.json', url: WHISPER_URL + 'special_tokens_map.json', size: 2194, sha256: '' },
+  { name: WHISPER_DIR + 'tokenizer.json', url: WHISPER_URL + 'tokenizer.json', size: 2480466, sha256: '' },
+  { name: WHISPER_DIR + 'tokenizer_config.json', url: WHISPER_URL + 'tokenizer_config.json', size: 282682, sha256: '' },
+  { name: WHISPER_DIR + 'vocab.json', url: WHISPER_URL + 'vocab.json', size: 1036584, sha256: '' },
+  { name: WHISPER_DIR + 'onnx/encoder_model.onnx', url: WHISPER_URL + 'onnx/encoder_model.onnx', size: 82468078, sha256: 'A9F3B752833B49E880DEC91EE5B6D936112BE7C3EA07C221024BA493439F46FE' },
+  { name: WHISPER_DIR + 'onnx/decoder_model_merged_q4.onnx', url: WHISPER_URL + 'onnx/decoder_model_merged_q4.onnx', size: 123602419, sha256: '09F83B71CEEDC97DAB1D90B914715DC532A646A147ABDA11D83C64867B7C319C' },
+]
+const whisperStatus = () => ({
+  ready: WHISPER_FILES.every(modelReady),
+  totalBytes: WHISPER_FILES.reduce((a, m) => a + m.size, 0),
+  folder: path.join(modelsDir(), 'whisper'), // the model is loaded from here as "onnx-community/whisper-base"
+})
+let whisperJob = null
+ipcMain.handle('whisper:status', () => whisperStatus())
+ipcMain.handle('whisper:download', async () => {
+  if (whisperJob) return whisperJob
+  whisperJob = (async () => {
+    try {
+      const total = WHISPER_FILES.reduce((a, m) => a + m.size, 0)
+      let done = WHISPER_FILES.filter(modelReady).reduce((a, m) => a + m.size, 0)
+      const send = () => mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('whisper:progress', { received: done, total })
+      send()
+      for (const m of WHISPER_FILES) {
+        if (modelReady(m)) continue
+        const dest = path.join(modelsDir(), m.name)
+        fs.mkdirSync(path.dirname(dest), { recursive: true })
+        const part = dest + '.part'
+        await downloadFile(m.url, part, (n) => {
+          done += n
+          send()
+        })
+        if (fs.statSync(part).size !== m.size) {
+          fs.rmSync(part, { force: true })
+          throw new Error('A downloaded file had the wrong size, so it was thrown away. Try again.')
+        }
+        if (m.sha256) {
+          const hash = crypto.createHash('sha256').update(fs.readFileSync(part)).digest('hex').toUpperCase()
+          if (hash !== m.sha256) {
+            fs.rmSync(part, { force: true })
+            throw new Error('The downloaded file was not what was expected, so it was thrown away. Try again.')
+          }
+        }
+        fs.renameSync(part, dest)
+      }
+      return { ...whisperStatus(), error: null }
+    } catch (err) {
+      return { ...whisperStatus(), error: String((err && err.message) || err) }
+    } finally {
+      whisperJob = null
+    }
+  })()
+  return whisperJob
+})
+// 16 kHz mono sound of a piece of a file, as raw 32-bit floats: what the speech model listens to
+ipcMain.handle('audio:pcm16k', async (_e, { file, stream, start, dur }) => {
+  const args = ['-v', 'error']
+  if (start > 0) args.push('-ss', String(start))
+  if (dur > 0) args.push('-t', String(dur))
+  args.push('-i', file, '-map', `0:a:${stream || 0}`, '-ac', '1', '-ar', '16000', '-f', 'f32le', '-')
+  return await new Promise((resolve, reject) => {
+    execFile(ffmpegPath, args, { encoding: 'buffer', maxBuffer: 1024 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(String(stderr || err.message)))
+      resolve(stdout.buffer.slice(stdout.byteOffset, stdout.byteOffset + stdout.byteLength))
+    })
+  })
+})
+// save the subtitles file (.srt)
+ipcMain.handle('subtitles:save', async (_e, { name, text }) => {
+  const res = process.env.VIBE_SELFTEST && process.env.VIBE_TEST_OUT ? { canceled: false, filePath: process.env.VIBE_TEST_OUT } : await dialog.showSaveDialog(mainWindow, { defaultPath: path.join(projectsDir(), (name || 'Subtitles') + '.srt'), filters: [{ name: 'Subtitles', extensions: ['srt'] }] })
+  if (res.canceled || !res.filePath) return null
+  fs.writeFileSync(res.filePath, '﻿' + text, 'utf8')
+  return res.filePath
+})
+
 // Version history: copies of a project kept as you save and work, so an earlier state can be brought back.
 // One folder per project (named after the project file, or the tab for a project not saved yet).
 const historyDir = (key) => {

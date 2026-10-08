@@ -1,0 +1,170 @@
+import { useEffect, useState } from 'react'
+import Icon from './Icon.jsx'
+import { TEXT_PRESETS } from './textRender.js'
+import { loadWhisper, whisperDevice, transcribeWords, speechSources, toCaptions, toSrt, LANGUAGES } from './whisper.js'
+
+const MB = (n) => Math.round(n / 1048576)
+
+// Captions from speech: the speech model listens to the video's sound and the words become text clips on a "Captions" track.
+export default function CaptionDialog({ state, dispatch, onClose }) {
+  const [status, setStatus] = useState(null) // the model: {ready, totalBytes, folder}
+  const [dl, setDl] = useState(null) // download progress {received, total}
+  const [dlErr, setDlErr] = useState('')
+  const hasSel = speechSources(state, true).length > 0 // something with sound is selected
+  const [only, setOnly] = useState(hasSel)
+  const [lang, setLang] = useState(() => {
+    try {
+      return localStorage.getItem('vibe.captionLang') || ''
+    } catch {
+      return ''
+    }
+  })
+  const [styleName, setStyleName] = useState('Subtitle')
+  const [maxChars, setMaxChars] = useState(36)
+  const [replace, setReplace] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [pct, setPct] = useState(0)
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => {
+    window.api.whisperStatus().then(setStatus)
+    return window.api.onWhisperProgress(setDl)
+  }, [])
+
+  const download = async () => {
+    setDlErr('')
+    setDl({ received: 0, total: status.totalBytes })
+    const r = await window.api.whisperDownload()
+    setStatus(r)
+    if (r.error) setDlErr(r.error)
+    setDl(null)
+  }
+
+  const captionClips = state.overlayClips.filter((c) => c.caption && c.text)
+
+  const generate = async () => {
+    setBusy(true)
+    setPct(0)
+    setMsg('Loading the speech model…')
+    try {
+      const sources = speechSources(state, only)
+      if (!sources.length) {
+        setMsg(only ? 'Nothing selected has speech in it. Select a video clip (or its sound) first.' : 'No sound to listen to: the videos are silent or muted.')
+        return
+      }
+      await loadWhisper(status.folder)
+      const all = []
+      for (let i = 0; i < sources.length; i++) {
+        const s = sources[i]
+        setMsg(`Listening to ${s.name}${sources.length > 1 ? ` (${i + 1} of ${sources.length})` : ''}… (on the ${whisperDevice()})`)
+        const buf = await window.api.pcm16k({ file: s.file, stream: s.stream, start: s.from, dur: s.to - s.from })
+        const words = await transcribeWords(new Float32Array(buf), { language: lang, onProgress: (p) => setPct((i + p) / sources.length) })
+        const len = s.to - s.from
+        for (const w of words) all.push({ text: w.text, start: s.start + Math.min(w.start, len) / s.speed, end: s.start + Math.min(w.end, len) / s.speed })
+      }
+      all.sort((a, b) => a.start - b.start)
+      const items = toCaptions(all, maxChars)
+      if (!items.length) {
+        setMsg('No speech was found.')
+        return
+      }
+      dispatch({ type: 'addCaptions', items, style: TEXT_PRESETS.find((p) => p.name === styleName), replace })
+      setPct(1)
+      setMsg(`Added ${items.length} captions on the "Captions" track. Click one on the timeline to fix a word or change its look.`)
+    } catch (e) {
+      setMsg('Something went wrong: ' + String((e && e.message) || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const saveSrt = async () => {
+    const items = captionClips.map((c) => ({ start: c.start, dur: c.out - c.in, text: c.text.content }))
+    const file = await window.api.saveSubtitles({ name: 'Subtitles', text: toSrt(items) })
+    if (file) setMsg('Subtitles saved: ' + file)
+  }
+
+  const downloading = !!dl
+  return (
+    <div className="modal-bg" onClick={() => !busy && onClose()}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>Captions from speech</h3>
+        <div className="hint left">The speech model listens to the sound of your video and turns the words into text clips, timed to the speech. Everything stays on your PC.</div>
+
+        {status && !status.ready && (
+          <div className="mtop">
+            <div className="hint left">
+              The speech model (about {MB(status.totalBytes)} MB) is downloaded once, from the internet. After that it works offline.
+            </div>
+            <button className="primary wide" onClick={download} disabled={downloading}>
+              <Icon name="download" size={14} /> {downloading ? `Downloading… ${MB(dl.received)} of ${MB(dl.total)} MB` : 'Download the speech model'}
+            </button>
+            {dlErr && <div className="hint left warn">{dlErr}</div>}
+          </div>
+        )}
+
+        <fieldset disabled={!status || !status.ready || busy} className="lock-fs">
+          <div className="mtop">
+            <span className="mlabel">Listen to</span>
+            <select value={only ? 'sel' : 'all'} onChange={(e) => setOnly(e.target.value === 'sel')}>
+              <option value="all">All the speech in the video</option>
+              <option value="sel" disabled={!hasSel}>Only what is selected{hasSel ? '' : ' (nothing is)'}</option>
+            </select>
+          </div>
+          <div className="mtop">
+            <span className="mlabel">Language</span>
+            <select
+              value={lang}
+              onChange={(e) => {
+                setLang(e.target.value)
+                try {
+                  localStorage.setItem('vibe.captionLang', e.target.value)
+                } catch {}
+              }}
+            >
+              {LANGUAGES.map(([v, label]) => (
+                <option key={v} value={v}>{label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="mtop">
+            <span className="mlabel">Look</span>
+            <select value={styleName} onChange={(e) => setStyleName(e.target.value)}>
+              {TEXT_PRESETS.map((p) => (
+                <option key={p.name} value={p.name}>{p.name}{p.name === 'Subtitle' ? ' (recommended)' : ''}</option>
+              ))}
+            </select>
+          </div>
+          <div className="mrow">
+            <div className="mtop"><span className="mlabel">Longest caption (letters)</span></div>
+            <div className="minput">
+              <input type="range" min="16" max="70" value={maxChars} onChange={(e) => setMaxChars(+e.target.value)} />
+              <input type="number" min="16" max="70" value={maxChars} onChange={(e) => e.target.value !== '' && setMaxChars(+e.target.value)} />
+            </div>
+          </div>
+          <label className="chk">
+            <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
+            Replace the captions that are already there
+          </label>
+        </fieldset>
+
+        {busy && (
+          <div className="cap-bar"><span style={{ width: Math.round(pct * 100) + '%' }} /></div>
+        )}
+        {msg && <div className="hint left">{msg}</div>}
+
+        <div className="modal-foot">
+          <button onClick={saveSrt} disabled={!captionClips.length || busy} title={captionClips.length ? 'Save the captions as a subtitles file (.srt) for YouTube and others' : 'Make captions first'}>
+            Save subtitles (.srt)
+          </button>
+          <span className="btn-row">
+            <button onClick={onClose} disabled={busy}>Close</button>
+            <button className="primary" onClick={generate} disabled={!status || !status.ready || busy}>
+              {busy ? 'Working…' : 'Make captions'}
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}

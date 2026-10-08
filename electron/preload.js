@@ -67,6 +67,15 @@ contextBridge.exposeInMainWorld('api', {
   saveThumb: (o) => ipcRenderer.invoke('thumb:save', o),
   savePastedPicture: (o) => ipcRenderer.invoke('picture:savePasted', o),
   cleanAudio: (o) => ipcRenderer.invoke('audio:clean', o),
+  whisperStatus: () => ipcRenderer.invoke('whisper:status'),
+  whisperDownload: () => ipcRenderer.invoke('whisper:download'),
+  onWhisperProgress: (cb) => {
+    const h = (_e, d) => cb(d)
+    ipcRenderer.on('whisper:progress', h)
+    return () => ipcRenderer.removeListener('whisper:progress', h)
+  },
+  pcm16k: (o) => ipcRenderer.invoke('audio:pcm16k', o),
+  saveSubtitles: (o) => ipcRenderer.invoke('subtitles:save', o),
   proxyInfo: () => ipcRenderer.invoke('proxy:info'),
   proxyStatus: (ids) => ipcRenderer.invoke('proxy:status', ids),
   proxyClear: () => ipcRenderer.invoke('proxy:clear'),

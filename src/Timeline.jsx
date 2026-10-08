@@ -69,7 +69,7 @@ function RowLabel({ name, sub, mute, onMute, onRemove, onRename, onGrip, locked,
     </div>
   )
 }
-export default function Timeline({ height, state, dispatch, zoom, setZoom, splitKey, freezeKey, groupKey, ungroupKey, onFreeze, onKeybinds, snapOn, setSnapOn, onCopy, fitRef, miniOn, setMiniOn, rec, onRecord }) {
+export default function Timeline({ onCaptions, height, state, dispatch, zoom, setZoom, splitKey, freezeKey, groupKey, ungroupKey, onFreeze, onKeybinds, snapOn, setSnapOn, onCopy, fitRef, miniOn, setMiniOn, rec, onRecord }) {
   const scrollRef = useRef(null)
   const innerRef = useRef(null)
   const trackRef = useRef(null) // the ruler lane: reference for time <-> pixel conversion
@@ -973,6 +973,9 @@ export default function Timeline({ height, state, dispatch, zoom, setZoom, split
         </button>
         <button onClick={() => dispatch({ type: 'addText', t: state.playhead })} title="Add text or a title at the playhead (T)">
           <Icon name="type" size={13} /> Text
+        </button>
+        <button onClick={onCaptions} title="Captions from speech: the words in your video become text clips (needs a one-time model download)">
+          <Icon name="captions" size={13} />
         </button>
         <button className={'rec-btn' + (rec ? ' on' : '')} disabled={rec && rec.phase === 'saving'} onClick={onRecord} title="Record a voice-over from your microphone while the video plays (R). Use headphones so the microphone does not hear the project's sound.">
           <Icon name="mic" size={13} />{' '}

@@ -1,5 +1,5 @@
-- Each audio clip has its own volume now: select it and use the Inspector (the sliders under the track names are gone)
-- Split now cuts only the selected audio when only audio is selected, not the video and the other audio tracks
-- Audio files can be dropped into gaps of an audio track, or onto a video's sound lane, and go where there is room (a new track if needed)
-- The timeline can be resized: drag the bar above it (double-click to reset)
-- Fixed the preview freezing on the previous frame after playing or jumping around a project with many clips
+- BIG UPDATE: captions from speech. One button turns the words in your video into text clips, timed to the speech, and saves a subtitles file (.srt). A speech model (about 200 MB) is downloaded once, then it works offline
+- New: smooth preview for big videos. 4K and heavy videos get a small copy made in the background, so the preview plays and jumps around smoothly (the export always uses your original)
+- New: audio clean-up for each clip: noise reduction, cutting low rumble, and voice presets
+- New: preview quality (Full, Half, Quarter, Auto) in the preview bar
+- New: paste pictures into the image editor with Ctrl+V

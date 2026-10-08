@@ -38,6 +38,11 @@ export const VIDEO_STEPS = [
     text: 'Adds a text clip at the playhead. Pick a style and a font in the inspector on the right.',
   },
   {
+    target: '.tl-toolbar button[title^="Captions"]',
+    title: 'Captions',
+    text: 'Turns the words in your video into text clips, timed to the speech, and can save a subtitles file. It needs a one-time model download, and works offline after that.',
+  },
+  {
     target: ['[data-sec="transform"]', '.inspector'],
     title: 'Move, resize and warp',
     text: 'Click a clip, then use Transform to move, resize and rotate it, with keyframes to animate it. Funny warp lets you drag the four corners to bend the picture.',

@@ -1077,6 +1077,25 @@ export function reducer(state, a) {
       if (a.y) clip.tf = { ...DEFAULTS, y: a.y }
       return { ...commit(state, { overlayClips: [...state.overlayClips, clip] }), videoTracks, rowOrder, selection: [clip.id] }
     }
+    // Captions made from speech: one text clip per caption, on a track called "Captions" (made if needed).
+    // items = [{start, dur, text}] in timeline seconds; style = one of TEXT_PRESETS ({text, y}); replace = remove the earlier captions first
+    case 'addCaptions': {
+      let videoTracks = state.videoTracks
+      let rowOrder = state.rowOrder
+      let tr = videoTracks.find((x) => x.name === 'Captions')
+      if (!tr) {
+        tr = { id: a.trackId || uid(), name: 'Captions' }
+        videoTracks = [...videoTracks, tr]
+        rowOrder = ['v:' + tr.id, ...rowKeys(state)]
+      }
+      const keep = a.replace ? state.overlayClips.filter((c) => !(c.trackId === tr.id && c.caption)) : state.overlayClips
+      const style = a.style || {}
+      const added = (a.items || [])
+        .filter((i) => i.text && i.dur > 0.05)
+        .map((i) => ({ id: uid(), mediaId: null, trackId: tr.id, in: 0, out: i.dur, start: Math.max(0, i.start), caption: true, text: { ...TEXT_DEFAULTS, ...(style.text || {}), content: i.text }, tf: { ...DEFAULTS, y: style.y || 0 } }))
+      if (!added.length && keep.length === state.overlayClips.length) return state
+      return { ...commit(state, { overlayClips: [...keep, ...added] }), videoTracks, rowOrder, selection: added.map((c) => c.id) }
+    }
     // change the text of a clip; patch = {content: 'Hi'} / {outline: {on: true}} ...; live = while dragging a slider
     case 'setText': {
       const f = (c) => {
