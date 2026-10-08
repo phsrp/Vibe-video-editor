@@ -1,1 +1,5 @@
-- Fixed: exporting a project with very many clips failed with an ENAMETOOLONG error. Exports now work however long the project is
+- Each audio clip has its own volume now: select it and use the Inspector (the sliders under the track names are gone)
+- Split now cuts only the selected audio when only audio is selected, not the video and the other audio tracks
+- Audio files can be dropped into gaps of an audio track, or onto a video's sound lane, and go where there is room (a new track if needed)
+- The timeline can be resized: drag the bar above it (double-click to reset)
+- Fixed the preview freezing on the previous frame after playing or jumping around a project with many clips
