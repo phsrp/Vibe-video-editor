@@ -60,6 +60,14 @@ const PATHS = {
   help: (<><circle cx="12" cy="12" r="9" /><path d="M9.5 9.2a2.6 2.6 0 1 1 3.6 2.4c-.7.4-1.1.9-1.1 1.8M12 17h.01" /></>),
   home: (<><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M9 22V12h6v10" /></>),
   download: (<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /><path d="M12 15V3" /></>),
+  bucket: (<><path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" /><path d="m5 2 5 5" /><path d="M2 13h15" /><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z" /></>),
+  smudge: (<><path d="M3 17c3-1 4-5 7-5s3 4 6 4 4-3 5-5" /><path d="M3 21c3-1 4-3 7-3s3 2 6 2 4-2 5-3" /></>),
+  select: (<path d="M4 4h3M10 4h4M17 4h3v3M20 10v4M20 17v3h-3M14 20h-4M7 20H4v-3M4 14v-4M4 7V4" />),
+  lasso: (<><path d="M7 20c-3-1-5-3-5-6 0-4 4.5-8 10-8s10 3 10 7-5 6-9 5" /><path d="M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" /></>),
+  flip: (<><path d="M12 3v18" strokeDasharray="2 3" /><path d="M8 7 3 17h5V7Z" /><path d="m16 7 5 10h-5V7Z" /></>),
+  pen: (<><path d="M12 19l7-7 3 3-7 7-3-3Z" /><path d="M18 13 16.5 5.5 2 2l3.5 14.5L13 18l5-5Z" /><path d="m2 2 7.6 7.6" /><circle cx="11" cy="11" r="2" /></>),
+  hand: (<><path d="M18 11V6a2 2 0 0 0-4 0v1M14 7V4a2 2 0 0 0-4 0v7M10 10.5V6a2 2 0 0 0-4 0v8" /><path d="M18 8a2 2 0 0 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-5.9-2.4L3.4 16a2 2 0 0 1 3-2.7L8 15" /></>),
+  rotate: (<><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></>),
 }
 
 // fill = draw the shape filled (used for play / keyframe diamonds)

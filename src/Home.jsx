@@ -59,15 +59,15 @@ export default function Home({ active, onNew, onOpen, onOpenRecent }) {
           {(recents || []).map((r) => (
             <div key={r.path} className="card" onClick={() => onOpenRecent(r)} title={r.path}>
               <div className="card-thumb" style={{ backgroundImage: r.thumb ? `url("${toUrl(r.thumb)}")` : undefined }}>
-                {!r.thumb && <Icon name={r.kind === 'image' ? 'image' : 'play'} size={28} />}
-                <span className={'card-badge ' + (r.kind === 'image' ? 'image' : 'video')}>{r.kind === 'image' ? 'image' : 'video'}</span>
+                {!r.thumb && <Icon name={r.kind === 'drawing' ? 'pen' : r.kind === 'image' ? 'image' : 'play'} size={28} />}
+                <span className={'card-badge ' + (r.kind === 'image' || r.kind === 'drawing' ? r.kind : 'video')}>{r.kind === 'image' || r.kind === 'drawing' ? r.kind : 'video'}</span>
                 <button className="card-x" onClick={(e) => remove(e, r)} title="Remove from this list (the file is not deleted)">
                   <Icon name="x" size={12} />
                 </button>
               </div>
               <div className="card-name">{r.name}</div>
               <div className="card-sub">
-                {r.kind === 'image'
+                {r.kind === 'image' || r.kind === 'drawing'
                   ? `${r.clips} layer${r.clips === 1 ? '' : 's'} · ${r.size || ''} · ${ago(r.modified)}`
                   : `${r.clips} clip${r.clips === 1 ? '' : 's'} · ${len(r.duration)} · ${ago(r.modified)}`}
               </div>

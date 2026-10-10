@@ -16,7 +16,7 @@ export function ThemeSample({ theme, kind = 'video' }) {
         <button>Save</button>
         <span className="ts-name">My project</span>
         <span className="ts-spacer" />
-        <button className="primary">{kind === 'image' ? 'Export picture…' : 'Export video…'}</button>
+        <button className="primary">{kind === 'video' ? 'Export video…' : 'Export picture…'}</button>
       </div>
       <div className="ts-body">
         {kind === 'video' ? (
@@ -26,9 +26,9 @@ export function ThemeSample({ theme, kind = 'video' }) {
           </div>
         ) : (
           <div className="ts-bin">
-            <div className="ts-tool on">▭</div>
-            <div className="ts-tool">✎</div>
-            <div className="ts-tool">T</div>
+            <div className="ts-tool on">{kind === 'drawing' ? '✎' : '▭'}</div>
+            <div className="ts-tool">{kind === 'drawing' ? '◌' : '✎'}</div>
+            <div className="ts-tool">{kind === 'drawing' ? '▭' : 'T'}</div>
           </div>
         )}
         <div className="ts-stage">
@@ -43,17 +43,28 @@ export function ThemeSample({ theme, kind = 'video' }) {
             <span className="ts-dim">00:03 / 00:12</span>
           </div>
         </div>
-        <div className="ts-insp">
-          <div className="ts-tabs">
-            <span className="on">Clip</span>
-            <span>Look</span>
-            <span>Audio</span>
+        {kind === 'drawing' ? (
+          <div className="ts-insp">
+            <div className="ts-colour" />
+            <div className="ts-row"><span>Size</span><input type="range" defaultValue="40" tabIndex={-1} /></div>
+            <div className="ts-row"><span>Opacity</span><input type="range" defaultValue="80" tabIndex={-1} /></div>
+            <div className="ts-sect">Brushes <i /></div>
+            <div className="ts-item"><span className="ts-thumb" /><span><b>Pencil</b></span></div>
+            <div className="ts-item"><span className="ts-thumb alt" /><span><b>Ink pen</b></span></div>
           </div>
-          <div className="ts-sect">Transform <i /></div>
-          <div className="ts-row"><span>Scale</span><input type="range" defaultValue="60" tabIndex={-1} /></div>
-          <div className="ts-row"><span>Opacity</span><input type="text" defaultValue="100" readOnly tabIndex={-1} /></div>
-          <div className="ts-warn">Move the playhead over this clip to edit it.</div>
-        </div>
+        ) : (
+          <div className="ts-insp">
+            <div className="ts-tabs">
+              <span className="on">Clip</span>
+              <span>Look</span>
+              <span>Audio</span>
+            </div>
+            <div className="ts-sect">Transform <i /></div>
+            <div className="ts-row"><span>Scale</span><input type="range" defaultValue="60" tabIndex={-1} /></div>
+            <div className="ts-row"><span>Opacity</span><input type="text" defaultValue="100" readOnly tabIndex={-1} /></div>
+            <div className="ts-warn">Move the playhead over this clip to edit it.</div>
+          </div>
+        )}
       </div>
       <div className="ts-timeline">
         {kind === 'video' ? (
@@ -216,12 +227,14 @@ export default function ThemeEditor({ themes, onSave, theme, setTheme, onPreview
         <div className="seg">
           <button className={kind === 'video' ? 'on' : ''} onClick={() => setKind('video')}>Video editor</button>
           <button className={kind === 'image' ? 'on' : ''} onClick={() => setKind('image')}>Image editor</button>
+          <button className={kind === 'drawing' ? 'on' : ''} onClick={() => setKind('drawing')}>Drawing editor</button>
         </div>
         <ThemeSample theme={theNow} kind={kind} />
         <div className="hint left">A small stand-in for the editor. To see the real thing with this theme on:</div>
         <div className="te-prev-btns">
           <button onClick={() => onPreview('video', theNow)}>See it in the video editor</button>
           <button onClick={() => onPreview('image', theNow)}>See it in the image editor</button>
+          <button onClick={() => onPreview('drawing', theNow)}>See it in the drawing editor</button>
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Editor from './Editor.jsx'
 import ImageEditor from './ImageEditor.jsx'
+import DrawingEditor from './DrawingEditor.jsx'
 import NewProjectDialog from './NewProjectDialog.jsx'
 import { kindOf } from './project.js'
 import Home from './Home.jsx'
@@ -75,7 +76,7 @@ export default function App() {
     setShowSettings(false)
     const tab = tabs.find((x) => x.kind === kind)
     if (tab) setActiveId(tab.id)
-    else if (kind === 'image') newTab({ canvas: { w: 1280, h: 720, bg: '#ffffff' } }, 'image')
+    else if (kind === 'image' || kind === 'drawing') newTab({ canvas: { w: 1280, h: 720, bg: '#ffffff' } }, kind)
     else newTab(null, 'video')
   }
   const showPopup = !hidden && (['available', 'downloading', 'ready'].includes(update.state) || (update.state === 'error' && update.during === 'download'))
@@ -90,7 +91,7 @@ export default function App() {
   // the "New project" answer: video, or image with its canvas
   const createProject = (kind, canvas) => {
     setChooser(false)
-    newTab(kind === 'image' ? { canvas } : null, kind)
+    newTab(kind === 'image' || kind === 'drawing' ? { canvas } : null, kind)
   }
   useEffect(() => {
     window.__newTab = createProject // developer self-test
@@ -203,7 +204,7 @@ export default function App() {
         let useful = false
         try {
           const d = JSON.parse(a.json)
-          useful = (d.clips || []).length || (d.audioClips || []).length || (d.overlayClips || []).length
+          useful = (d.clips || []).length || (d.audioClips || []).length || (d.overlayClips || []).length || (d.kind === 'drawing' && (d.layers || []).length)
         } catch {}
         if (useful) saved.push(a)
         else window.api.clearAutosave(a.id)
@@ -231,7 +232,7 @@ export default function App() {
               }
             }}
             title={(t.path || 'Not saved yet') + '\nMiddle-click to save and close'}>
-            <span className="tab-kind" title={t.kind === 'image' ? 'Image project' : 'Video project'}><Icon name={t.kind === 'image' ? 'image' : 'film'} size={12} /></span>
+            <span className="tab-kind" title={t.kind === 'drawing' ? 'Drawing project' : t.kind === 'image' ? 'Image project' : 'Video project'}><Icon name={t.kind === 'drawing' ? 'pen' : t.kind === 'image' ? 'image' : 'film'} size={12} /></span>
             <span className="tab-title">{t.title}</span>
             {t.dirty && <span className="tab-dot" title="Unsaved changes" />}
             <button
@@ -333,7 +334,19 @@ export default function App() {
       <div className="host">
         <Home active={activeId === 'home'} onNew={() => setChooser(true)} onOpen={openDialog} onOpenRecent={openRecent} />
         {tabs.map((t) =>
-          t.kind === 'image' ? (
+          t.kind === 'drawing' ? (
+            <DrawingEditor
+              key={t.id}
+              tabId={t.id}
+              active={activeId === t.id}
+              initial={t.initial}
+              binds={binds}
+              onMeta={onMeta}
+              onNew={() => setChooser(true)}
+              onOpen={openDialog}
+              registerHandle={registerHandle}
+            />
+          ) : t.kind === 'image' ? (
             <ImageEditor
               key={t.id}
               tabId={t.id}
@@ -418,10 +431,11 @@ export default function App() {
       {preview && (
         <div className="theme-previewbar">
           <span>
-            Trying <b>{preview.theme.name}</b> in the {preview.kind === 'image' ? 'image' : 'video'} editor
+            Trying <b>{preview.theme.name}</b> in the {preview.kind === 'image' ? 'image' : preview.kind === 'drawing' ? 'drawing' : 'video'} editor
           </span>
           <button className={preview.kind === 'video' ? 'on' : ''} onClick={() => previewTheme('video', preview.theme)}>Video editor</button>
           <button className={preview.kind === 'image' ? 'on' : ''} onClick={() => previewTheme('image', preview.theme)}>Image editor</button>
+          <button className={preview.kind === 'drawing' ? 'on' : ''} onClick={() => previewTheme('drawing', preview.theme)}>Drawing editor</button>
           <button className="primary" onClick={() => { setPreview(null); setShowSettings(true) }}>Back to settings</button>
           <button onClick={() => setPreview(null)} title="Go back to the theme that is in use">Stop</button>
         </div>

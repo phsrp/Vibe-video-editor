@@ -132,7 +132,8 @@ export async function restoreImage(json) {
 // 'image' or 'video': what kind of project a saved file is
 export function kindOf(json) {
   try {
-    return JSON.parse(json).kind === 'image' ? 'image' : 'video'
+    const k = JSON.parse(json).kind
+    return k === 'image' ? 'image' : k === 'drawing' ? 'drawing' : 'video'
   } catch {
     return 'video'
   }

@@ -103,6 +103,57 @@ export const VIDEO_STEPS = [
   },
 ]
 
+export const DRAWING_STEPS = [
+  {
+    title: 'Welcome to the drawing editor',
+    text: 'A place to draw and paint, with pen pressure if you have a drawing tablet. A short tour of the main things; replay it any time with the Tutorial button.',
+  },
+  {
+    target: '.toolbar-v',
+    title: 'Tools',
+    text: 'Brush, eraser, smudge, line, rectangle, ellipse, fill, eyedropper and selection. Hover a tool to see its key. Hold Space to move around, and Alt to pick a colour.',
+  },
+  {
+    target: '.dr-view',
+    title: 'The canvas',
+    text: 'Use the mouse wheel to zoom and the Space key (or the middle mouse button) to move around. The ring shows how big your brush is.',
+  },
+  {
+    target: ['.dr-colour', '.inspector'],
+    title: 'Colour',
+    text: 'Click in the square to pick a colour. The two big swatches are the brush colour and the background colour; X swaps them.',
+  },
+  {
+    target: ['.dr-opts', '.inspector'],
+    title: 'Size, opacity and smoothing',
+    text: 'Size changes with the [ and ] keys. Smoothing steadies a shaky line. Mirror draws the other half for you.',
+  },
+  {
+    target: ['.dr-brushes', '.inspector'],
+    title: 'Brushes and Krita packs',
+    text: 'Pick a brush here. “+ Krita pack” adds brush packs made for Krita (.bundle files) and they show up in this list.',
+  },
+  {
+    target: '.layers .layer-add',
+    title: 'Layers',
+    text: 'Draw on separate layers so you can change things later. Drag layers to reorder, and use the eye and the padlock to hide or protect one.',
+  },
+  {
+    target: '.topbar button[title^="Undo"]',
+    title: 'Undo',
+    text: 'Undo (Ctrl+Z) takes back a stroke. Redo is Ctrl+Y.',
+  },
+  {
+    target: '.topbar .primary',
+    title: 'Export',
+    text: 'Save your drawing as PNG, JPG or WebP. Save keeps all layers so you can keep working on it.',
+  },
+  {
+    title: 'That is the tour',
+    text: 'Have fun. Hovering over almost any button shows what it does. Press the Tutorial button at the top to see this again.',
+  },
+]
+
 export const IMAGE_STEPS = [
   {
     title: 'Welcome to the image editor',

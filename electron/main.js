@@ -293,6 +293,53 @@ function makeProxy({ file, id, duration }) {
     })
   })
 }
+// Brush packs for the drawing editor: Krita .bundle (or single .kpp) files. They are copied into the app's data folder
+// so they are still there next time; the editor reads them from there.
+const brushDir = () => {
+  const d = path.join(app.getPath('userData'), 'brushes')
+  fs.mkdirSync(d, { recursive: true })
+  return d
+}
+const brushFiles = () =>
+  fs
+    .readdirSync(brushDir())
+    .filter((f) => /\.(bundle|zip|kpp)$/i.test(f))
+    .map((f) => ({ name: f, size: fs.statSync(path.join(brushDir(), f)).size }))
+ipcMain.handle('brushes:list', () => brushFiles())
+ipcMain.handle('brushes:import', async () => {
+  let files
+  if (process.env.VIBE_SELFTEST && process.env.VIBE_TEST_BRUSHES) files = process.env.VIBE_TEST_BRUSHES.split(';').filter(Boolean)
+  else {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose Krita brush packs',
+      properties: ['openFile', 'multiSelect'],
+      filters: [{ name: 'Krita brush packs', extensions: ['bundle', 'kpp', 'zip'] }, { name: 'All files', extensions: ['*'] }],
+    })
+    if (res.canceled) return brushFiles()
+    files = res.filePaths
+  }
+  for (const f of files) {
+    try {
+      let dest = path.join(brushDir(), path.basename(f))
+      for (let i = 2; fs.existsSync(dest); i++) dest = path.join(brushDir(), path.basename(f, path.extname(f)) + ` (${i})` + path.extname(f))
+      fs.copyFileSync(f, dest)
+    } catch {}
+  }
+  return brushFiles()
+})
+ipcMain.handle('brushes:read', (_e, name) => fs.readFileSync(path.join(brushDir(), path.basename(String(name)))))
+ipcMain.handle('brushes:delete', (_e, name) => {
+  try {
+    fs.rmSync(path.join(brushDir(), path.basename(String(name))), { force: true })
+  } catch {}
+  return brushFiles()
+})
+// (for the developer self-test: bytes of a brush pack by path)
+ipcMain.handle('brushes:readPath', (_e, p) => {
+  if (!process.env.VIBE_SELFTEST) throw new Error('not available')
+  return fs.readFileSync(p)
+})
+
 // Settings > Storage: what the app keeps on this PC besides your projects, and clearing it
 const dirStats = (dir) => {
   let count = 0
