@@ -27,7 +27,7 @@ export async function loadWhisper(folder) {
     const base = new URL('./ort-tf/', document.baseURI).href
     env.backends.onnx.wasm.wasmPaths = { mjs: base + 'ort-wasm-simd-threaded.asyncify.mjs', wasm: base + 'ort-wasm-simd-threaded.asyncify.wasm' }
     const gpu = !!(navigator.gpu && (await navigator.gpu.requestAdapter().catch(() => null)))
-    transcriber = await pipeline('automatic-speech-recognition', 'onnx-community/whisper-base', {
+    transcriber = await pipeline('automatic-speech-recognition', 'onnx-community/whisper-base_timestamped', {
       device: gpu ? 'webgpu' : 'wasm',
       dtype: { encoder_model: 'fp32', decoder_model_merged: 'q4' },
     })
@@ -49,19 +49,43 @@ export async function transcribeWords(pcm, { language, onProgress } = {}) {
   const seconds = pcm.length / 16000
   const total = Math.max(1, Math.ceil(seconds / 20)) // about 20 new seconds per 30-second window
   let seen = 0
-  // (this model gives the time of every sentence / phrase, not of every word)
-  const r = await t(pcm, {
-    return_timestamps: true,
-    chunk_length_s: 30,
-    stride_length_s: 5,
-    language: language || null,
-    task: 'transcribe',
-    chunk_callback: () => {
-      seen++
-      onProgress && onProgress(Math.min(0.99, seen / total))
-    },
-  })
+  const run = (mode) =>
+    t(pcm, {
+      return_timestamps: mode,
+      chunk_length_s: 30,
+      stride_length_s: 5,
+      language: language || null,
+      task: 'transcribe',
+      chunk_callback: () => {
+        seen++
+        onProgress && onProgress(Math.min(0.99, seen / total))
+      },
+    })
+  // the model gives the time of every WORD; if it ever cannot, the time of every phrase is spread over its words
+  let r
+  let perWord = true
+  try {
+    r = await run('word')
+  } catch (e) {
+    if (!/cross.?attention/i.test(String((e && e.message) || e))) throw e
+    perWord = false
+    seen = 0
+    r = await run(true)
+  }
   const words = []
+  if (perWord) {
+    const list = (r.chunks || []).filter((c) => String(c.text || '').trim() && c.timestamp && c.timestamp[0] != null)
+    list.forEach((c, i) => {
+      const text = String(c.text).trim()
+      if (/^\[.*\]$|^\(.*\)$/.test(text)) return // (sound notes like [MUSIC] are not speech)
+      const s = c.timestamp[0]
+      const nextStart = list[i + 1] ? list[i + 1].timestamp[0] : null
+      let e = c.timestamp[1]
+      if (e == null || e <= s) e = nextStart != null && nextStart > s ? Math.min(nextStart, s + 0.6) : s + 0.35
+      words.push({ text, start: s, end: e })
+    })
+    return words
+  }
   for (const c of r.chunks || []) {
     const text = String(c.text || '').replace(/\s+/g, ' ').trim()
     if (!text || /^\[.*\]$|^\(.*\)$/.test(text)) continue // (sound notes like [MUSIC] are not speech)
@@ -95,7 +119,7 @@ export function speechSources(state, onlySelected) {
     if (onlySelected && !sel.has(c.id) && !streams.some((n) => sel.has(`sa:${c.id}:${n}`))) continue
     const n = onlySelected ? streams.find((k) => sel.has(c.id) || sel.has(`sa:${c.id}:${k}`)) : streams.find((k) => !hid.has('s:' + k) && !(state.streamSettings[k] || {}).mute)
     if (n == null || streamAudioOf(c, n).mute) continue
-    out.push({ file: m.path, stream: n, from: c.in, to: c.out, start: c.start, speed: speedOf(c), name: m.name })
+    out.push({ mediaId: m.id, file: m.path, stream: n, from: c.in, to: c.out, start: c.start, speed: speedOf(c), name: m.name })
   }
   for (const a of state.audioClips) {
     const m = media(a.mediaId)
@@ -103,7 +127,7 @@ export function speechSources(state, onlySelected) {
     if (onlySelected ? !sel.has(a.id) : a.stream == null) continue // (without a selection only the sound of videos, not music)
     const tr = state.audioTracks.find((x) => x.id === a.trackId)
     if ((tr && tr.mute) || hid.has('a:' + a.trackId) || audioClipVol(a).mute) continue
-    out.push({ file: m.path, stream: a.stream != null ? a.stream : 0, from: a.in, to: a.out, start: a.start, speed: 1, name: m.name })
+    out.push({ mediaId: m.id, file: m.path, stream: a.stream != null ? a.stream : 0, from: a.in, to: a.out, start: a.start, speed: 1, name: m.name })
   }
   return out
 }

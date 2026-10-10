@@ -6,7 +6,7 @@ import { loadWhisper, whisperDevice, transcribeWords, speechSources, toCaptions,
 const MB = (n) => Math.round(n / 1048576)
 
 // Captions from speech: the speech model listens to the video's sound and the words become text clips on a "Captions" track.
-export default function CaptionDialog({ state, dispatch, onClose }) {
+export default function CaptionDialog({ state, dispatch, onClose, onEditByText }) {
   const [status, setStatus] = useState(null) // the model: {ready, totalBytes, folder}
   const [dl, setDl] = useState(null) // download progress {received, total}
   const [dlErr, setDlErr] = useState('')
@@ -60,6 +60,8 @@ export default function CaptionDialog({ state, dispatch, onClose }) {
         const buf = await window.api.pcm16k({ file: s.file, stream: s.stream, start: s.from, dur: s.to - s.from })
         const words = await transcribeWords(new Float32Array(buf), { language: lang, onProgress: (p) => setPct((i + p) / sources.length) })
         const len = s.to - s.from
+        // keep what was said with the video (seconds of the file), for editing by text
+        dispatch({ type: 'setTranscript', mediaId: s.mediaId, from: s.from, to: s.to, words: words.map((w) => ({ text: w.text, s: s.from + Math.min(w.start, len), e: s.from + Math.min(w.end, len) })) })
         for (const w of words) all.push({ text: w.text, start: s.start + Math.min(w.start, len) / s.speed, end: s.start + Math.min(w.end, len) / s.speed })
       }
       all.sort((a, b) => a.start - b.start)
@@ -154,9 +156,14 @@ export default function CaptionDialog({ state, dispatch, onClose }) {
         {msg && <div className="hint left">{msg}</div>}
 
         <div className="modal-foot">
-          <button onClick={saveSrt} disabled={!captionClips.length || busy} title={captionClips.length ? 'Save the captions as a subtitles file (.srt) for YouTube and others' : 'Make captions first'}>
-            Save subtitles (.srt)
-          </button>
+          <span className="btn-row">
+            <button onClick={saveSrt} disabled={!captionClips.length || busy} title={captionClips.length ? 'Save the captions as a subtitles file (.srt) for YouTube and others' : 'Make captions first'}>
+              Save subtitles (.srt)
+            </button>
+            <button onClick={onEditByText} disabled={busy || !Object.keys(state.transcripts || {}).length} title={Object.keys(state.transcripts || {}).length ? 'See the words and cut your video by deleting words, filler words or pauses' : 'Make captions first: that listens to your video'}>
+              Edit by text…
+            </button>
+          </span>
           <span className="btn-row">
             <button onClick={onClose} disabled={busy}>Close</button>
             <button className="primary" onClick={generate} disabled={!status || !status.ready || busy}>

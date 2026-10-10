@@ -5,6 +5,7 @@ import Timeline from './Timeline.jsx'
 import KeybindDialog from './KeybindDialog.jsx'
 import HistoryDialog from './HistoryDialog.jsx'
 import CaptionDialog from './CaptionDialog.jsx'
+import TranscriptDialog from './TranscriptDialog.jsx'
 import Inspector from './Inspector.jsx'
 import LibraryPanel from './LibraryPanel.jsx'
 import Icon from './Icon.jsx'
@@ -185,7 +186,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     setBusy(true)
     try {
       const r = await restore(json)
-      dispatch({ type: 'loadProject', media: r.media, clips: r.clips, audioClips: r.audioClips, audioTracks: r.audioTracks, streamSettings: r.streamSettings, overlayClips: r.overlayClips, videoTracks: r.videoTracks, mainName: r.mainName, rowOrder: r.rowOrder, markers: r.markers, lockedRows: r.lockedRows, hiddenRows: r.hiddenRows, aspect: r.aspect })
+      dispatch({ type: 'loadProject', media: r.media, clips: r.clips, audioClips: r.audioClips, audioTracks: r.audioTracks, streamSettings: r.streamSettings, transcripts: r.transcripts, overlayClips: r.overlayClips, videoTracks: r.videoTracks, mainName: r.mainName, rowOrder: r.rowOrder, markers: r.markers, lockedRows: r.lockedRows, hiddenRows: r.hiddenRows, aspect: r.aspect })
       setProjectPath(file)
       // a project opened from a file starts "clean"; one restored from autosave still needs saving
       savedJson.current = file ? serialize(r) : serialize(initialState)
@@ -214,7 +215,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     setBusy(true)
     try {
       const r = await restore(json)
-      dispatch({ type: 'loadProject', media: r.media, clips: r.clips, audioClips: r.audioClips, audioTracks: r.audioTracks, streamSettings: r.streamSettings, overlayClips: r.overlayClips, videoTracks: r.videoTracks, mainName: r.mainName, rowOrder: r.rowOrder, markers: r.markers, lockedRows: r.lockedRows, hiddenRows: r.hiddenRows, aspect: r.aspect })
+      dispatch({ type: 'loadProject', media: r.media, clips: r.clips, audioClips: r.audioClips, audioTracks: r.audioTracks, streamSettings: r.streamSettings, transcripts: r.transcripts, overlayClips: r.overlayClips, videoTracks: r.videoTracks, mainName: r.mainName, rowOrder: r.rowOrder, markers: r.markers, lockedRows: r.lockedRows, hiddenRows: r.hiddenRows, aspect: r.aspect })
       extractPending(r.pending)
       setShowHistory(false)
       flash('Older version restored. Save to keep it.')
@@ -443,6 +444,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
   }
 
   const [showCaptions, setShowCaptions] = useState(false)
+  const [showTranscript, setShowTranscript] = useState(false)
   // smooth preview copies of big videos are made in the background: show how far they are, use them once they exist
   const [proxyPct, setProxyPct] = useState({})
   useEffect(
@@ -639,7 +641,8 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
         onOpenJson(json)
       }} />}
       {showKeys && <KeybindDialog binds={binds} setBinds={setBinds} onClose={() => setShowKeys(false)} />}
-      {showCaptions && <CaptionDialog state={state} dispatch={dispatch} onClose={() => setShowCaptions(false)} />}
+      {showCaptions && <CaptionDialog state={state} dispatch={dispatch} onClose={() => setShowCaptions(false)} onEditByText={() => { setShowCaptions(false); setShowTranscript(true) }} />}
+      {showTranscript && <TranscriptDialog state={state} dispatch={dispatch} onClose={() => setShowTranscript(false)} />}
       {tour && active && (
         <Tour
           steps={VIDEO_STEPS}

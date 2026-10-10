@@ -20,6 +20,7 @@ export function serialize(state) {
     audioClips: state.audioClips,
     audioTracks: state.audioTracks,
     streamSettings: state.streamSettings,
+    transcripts: state.transcripts,
     overlayClips: state.overlayClips,
     videoTracks: state.videoTracks,
     mainName: state.mainName,
@@ -70,6 +71,8 @@ export async function restore(json) {
     hiddenRows: data.hiddenRows || [],
     audioTracks: data.audioTracks || [],
     streamSettings: data.streamSettings || {},
+    // what was said in each video; their file ids may have changed when the files were read again
+    transcripts: Object.fromEntries(Object.entries(data.transcripts || {}).map(([k, v]) => [idMap.get(k) || k, v])),
     missing,
     pending: media.filter((m) => m.audioPending),
   }

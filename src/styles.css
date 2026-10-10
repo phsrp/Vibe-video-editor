@@ -514,3 +514,15 @@ input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var
 .insp-tabs button:hover { color: var(--text); background: var(--panel2); }
 .insp-tabs button.on { color: var(--text); background: var(--panel2); border-color: var(--accent); }
 .sect-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 7px; flex: none; }
+
+/* edit by text */
+.tr-modal { width: 640px; max-width: 92vw; }
+.tr-text { max-height: 46vh; overflow: auto; margin: 10px 0; padding: 10px 12px; background: var(--panel2); border-radius: 8px; line-height: 1.9; font-size: 14px; }
+.tr-word { cursor: pointer; border-radius: 4px; padding: 1px 0; }
+.tr-word:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.tr-word.sel { background: var(--accent); color: var(--accent-fg); }
+.tr-word.filler { color: var(--love, #eb6f92); text-decoration: underline dotted; }
+.tr-word.after-pause { margin-left: 12px; }
+.tr-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.tr-pause { display: inline-flex; gap: 6px; align-items: center; color: var(--dim); }
+.tr-pause input { width: 58px; }

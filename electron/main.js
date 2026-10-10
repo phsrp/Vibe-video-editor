@@ -844,8 +844,8 @@ ipcMain.handle('models:download', async () => {
 })
 // The speech-to-text model for captions: Whisper base (OpenAI, MIT), as ONNX files for the browser by the Hugging Face
 // "onnx-community" (Apache-2.0 / MIT). Downloaded once, on request, like the AI selection model; it runs on the graphics card.
-const WHISPER_URL = 'https://huggingface.co/onnx-community/whisper-base/resolve/1846881b6b3a3024392c1eea3ad983695bc23925/'
-const WHISPER_DIR = 'whisper/onnx-community/whisper-base/'
+const WHISPER_URL = 'https://huggingface.co/onnx-community/whisper-base_timestamped/resolve/608c49e61301901684bc36cac8f74b95ff6b5a8e/'
+const WHISPER_DIR = 'whisper/onnx-community/whisper-base_timestamped/'
 const WHISPER_FILES = [
   { name: WHISPER_DIR + 'added_tokens.json', url: WHISPER_URL + 'added_tokens.json', size: 34604, sha256: '' },
   { name: WHISPER_DIR + 'config.json', url: WHISPER_URL + 'config.json', size: 2243, sha256: '' },
@@ -857,14 +857,19 @@ const WHISPER_FILES = [
   { name: WHISPER_DIR + 'tokenizer.json', url: WHISPER_URL + 'tokenizer.json', size: 2480466, sha256: '' },
   { name: WHISPER_DIR + 'tokenizer_config.json', url: WHISPER_URL + 'tokenizer_config.json', size: 282682, sha256: '' },
   { name: WHISPER_DIR + 'vocab.json', url: WHISPER_URL + 'vocab.json', size: 1036584, sha256: '' },
-  { name: WHISPER_DIR + 'onnx/encoder_model.onnx', url: WHISPER_URL + 'onnx/encoder_model.onnx', size: 82468078, sha256: 'A9F3B752833B49E880DEC91EE5B6D936112BE7C3EA07C221024BA493439F46FE' },
-  { name: WHISPER_DIR + 'onnx/decoder_model_merged_q4.onnx', url: WHISPER_URL + 'onnx/decoder_model_merged_q4.onnx', size: 123602419, sha256: '09F83B71CEEDC97DAB1D90B914715DC532A646A147ABDA11D83C64867B7C319C' },
+  { name: WHISPER_DIR + 'onnx/encoder_model.onnx', url: WHISPER_URL + 'onnx/encoder_model.onnx', size: 82451730, sha256: '7FCEA817BB2BE4D86729B521E5A7FCBEC28FA743EDFED67E882B33FF15852540' },
+  { name: WHISPER_DIR + 'onnx/decoder_model_merged_q4.onnx', url: WHISPER_URL + 'onnx/decoder_model_merged_q4.onnx', size: 123738327, sha256: 'FC1902CE2E42C69B2346D8E2A98898C60C01DA1E6A64AE90F41D22350AC7DB13' },
 ]
-const whisperStatus = () => ({
+const whisperStatus = () => {
+  try {
+    fs.rmSync(path.join(modelsDir(), 'whisper', 'onnx-community', 'whisper-base'), { recursive: true, force: true }) // the first speech model (sentence times only)
+  } catch {}
+  return {
   ready: WHISPER_FILES.every(modelReady),
   totalBytes: WHISPER_FILES.reduce((a, m) => a + m.size, 0),
-  folder: path.join(modelsDir(), 'whisper'), // the model is loaded from here as "onnx-community/whisper-base"
-})
+  folder: path.join(modelsDir(), 'whisper'), // the model is loaded from here as "onnx-community/whisper-base_timestamped"
+  }
+}
 let whisperJob = null
 ipcMain.handle('whisper:status', () => whisperStatus())
 ipcMain.handle('whisper:download', async () => {

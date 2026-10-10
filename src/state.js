@@ -27,6 +27,7 @@ export const initialState = {
   // Rows that are not listed yet are placed by rowKeys(). Video rows higher up are drawn on top.
   rowOrder: [],
   aspect: '16:9', // the shape of the video: see ASPECTS
+  transcripts: {}, // {[mediaId]: {words: [{text, s, e}]}}: what was said in a video, in seconds of the file (made by Captions)
   markers: [], // {id, t, label}: flags on the timeline ruler
   lockedRows: [], // row keys that cannot be edited
   hiddenRows: [], // row keys that are switched off (video: not shown or exported, audio: silent)
@@ -208,6 +209,56 @@ const nextFree = (clips, s, dur) => {
     if (s < xe - 1e-6 && s + dur > x.start + 1e-6) s = xe
   }
   return s
+}
+
+// Cut the time range [t0, t1) out of every track and close the gap: the main track, overlay clips, audio clips and
+// markers. A clip the range falls into becomes two clips (the part before it and the part after it).
+function cutRange(cur, t0, t1) {
+  const d = t1 - t0
+  const EPS = 0.02
+  const part = (c, srcA, srcB) => ({ ...c, in: srcA, out: srcB }) // a piece of a clip: source seconds srcA..srcB
+  // main video track (it ripples by itself: its clips follow each other)
+  const clips = []
+  for (const c of layout(cur.clips)) {
+    const orig = cur.clips.find((x) => x.id === c.id)
+    const end = c.start + c.dur
+    if (end <= t0 + 1e-6 || c.start >= t1 - 1e-6) {
+      clips.push(orig)
+      continue
+    }
+    const hasLeft = c.start < t0 - EPS
+    const hasRight = end > t1 + EPS
+    const a = srcAt(c, t0)
+    const b = srcAt(c, t1)
+    if (hasLeft) clips.push(c.reverse ? part(orig, a, orig.out) : part(orig, orig.in, a))
+    if (hasRight) {
+      const r = c.reverse ? part(orig, orig.in, b) : part(orig, b, orig.out)
+      clips.push({ ...r, id: hasLeft ? uid() : orig.id, transition: hasLeft ? null : orig.transition, gap: hasLeft ? 0 : orig.gap })
+    }
+  }
+  // items that sit anywhere in time (overlay clips and audio clips): cut, and move left what came after
+  const timed = (list, lay) =>
+    lay.flatMap((c) => {
+      const orig = list.find((x) => x.id === c.id)
+      const end = c.start + c.dur
+      if (end <= t0 + 1e-6) return [orig]
+      if (c.start >= t1 - 1e-6) return [{ ...orig, start: c.start - d }]
+      const hasLeft = c.start < t0 - EPS
+      const hasRight = end > t1 + EPS
+      const a = srcAt(c, t0)
+      const b = srcAt(c, t1)
+      const out = []
+      if (hasLeft) out.push(c.reverse ? part(orig, a, orig.out) : part(orig, orig.in, a))
+      if (hasRight) {
+        const r = c.reverse ? part(orig, orig.in, b) : part(orig, b, orig.out)
+        out.push({ ...r, id: hasLeft ? uid() : orig.id, start: t0 })
+      }
+      return out
+    })
+  const overlayClips = timed(cur.overlayClips, overlayLayout(cur.overlayClips))
+  const audioClips = timed(cur.audioClips, audioLayout(cur.audioClips))
+  const markers = cur.markers.filter((m) => m.t < t0 || m.t >= t1).map((m) => (m.t >= t1 ? { ...m, t: m.t - d } : m))
+  return { clips, overlayClips, audioClips, markers }
 }
 
 // Split ONLY the selected sound at time t (the picture and the other sounds stay whole).
@@ -443,6 +494,7 @@ export function reducer(state, a) {
         audioClips: a.audioClips || [],
         audioTracks: a.audioTracks || [],
         streamSettings: a.streamSettings || {},
+        transcripts: a.transcripts || {},
         overlayClips: a.overlayClips || [],
         videoTracks: a.videoTracks || [],
         mainName: a.mainName || 'Video 1',
@@ -1218,6 +1270,28 @@ export function reducer(state, a) {
       return { ...state, audioTracks: state.audioTracks.map((t) => (t.id === a.id ? { ...t, ...a.patch } : t)) }
     case 'setStream':
       return { ...state, streamSettings: { ...state.streamSettings, [a.n]: { volume: 1, mute: false, ...state.streamSettings[a.n], ...a.patch } } }
+    // what was said in a video (from Captions): words [{text, s, e}] in seconds of the file; they replace the words of
+    // the part [from, to] of the file that was listened to
+    case 'setTranscript': {
+      const old = (state.transcripts[a.mediaId] && state.transcripts[a.mediaId].words) || []
+      const keep = old.filter((w) => w.s < a.from - 1e-6 || w.s >= a.to - 1e-6)
+      const words = [...keep, ...a.words].sort((p, q) => p.s - q.s)
+      return { ...state, transcripts: { ...state.transcripts, [a.mediaId]: { words } } }
+    }
+    // Cut time ranges out of the timeline and close the gaps ("edit by text"): ranges = [[t0, t1], ...] in seconds
+    case 'rippleDelete': {
+      if ((state.lockedRows || []).includes('main')) return state
+      const ranges = (a.ranges || []).filter((r) => r[1] - r[0] > 0.001).sort((p, q) => q[0] - p[0]) // last first, so earlier times stay valid
+      if (!ranges.length) return state
+      let cur = { clips: state.clips, overlayClips: state.overlayClips, audioClips: state.audioClips, markers: state.markers }
+      for (const [t0, t1] of ranges) cur = cutRange(cur, t0, t1)
+      return {
+        ...commit(state, { clips: cur.clips, overlayClips: cur.overlayClips, audioClips: cur.audioClips }),
+        markers: cur.markers,
+        selection: [],
+        playhead: ranges[ranges.length - 1][0],
+      }
+    }
     // volume / mute of single audio clips (ids: 'sa:<clip>:<n>' for the sound of a video clip, or audio clip ids).
     // live: while a slider is dragged (call 'checkpoint' first), so the whole drag is one undo step
     case 'setClipAudio': {
