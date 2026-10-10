@@ -687,3 +687,4 @@ input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var
 .dr-layer-set input[type=range] { width: 100%; }
 .dr-layer-set select { flex: 1; min-width: 0; }
 .dr-layer-set button.on { border-color: var(--accent2); }.ts-colour { height: 54px; border-radius: 6px; background: linear-gradient(to bottom, transparent, #000), linear-gradient(to right, #fff, var(--accent)); margin-bottom: 6px; }.kind-card { justify-content: flex-start; }
+.toolbar-v { overflow-y: auto; }

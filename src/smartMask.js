@@ -214,7 +214,7 @@ export function maskToPolygon(logits, size = 256) {
 }
 
 // box + a few inside points from a loop (0..1), as the model's prompt
-function promptFromLoop(lasso) {
+export function promptFromLoop(lasso) {
   const xs = lasso.map((p) => p[0])
   const ys = lasso.map((p) => p[1])
   const x0 = Math.min(...xs)
@@ -234,6 +234,15 @@ function promptFromLoop(lasso) {
 export async function findSubject({ el, w, h, lasso, paths }) {
   const { sam } = await getSam2(paths)
   const mask = await sam.seed(el, w, h, promptFromLoop(lasso))
+  const poly = maskToPolygon(mask.logits)
+  return poly.length >= 3 ? poly : null
+}
+
+// The same with any prompt ([{x, y, label}] in 0..1: label 1 = on the subject, 0 = not, 2 / 3 = corners of a box): a click
+// on the subject, a box around it, or both.
+export async function findSubjectPrompt({ el, w, h, prompt, paths }) {
+  const { sam } = await getSam2(paths)
+  const mask = await sam.seed(el, w, h, prompt)
   const poly = maskToPolygon(mask.logits)
   return poly.length >= 3 ? poly : null
 }

@@ -1,3 +1,4 @@
-- New drawing editor, a third kind of project next to video and image: draw and paint with brushes, pen pressure and tilt, layers with blend modes, selections, fill, smudge, and line, rectangle and ellipse tools
-- Import Krita brush packs (.bundle and .kpp files) and use them as brushes; the editor comes with 14 brushes of its own
-- The drawing editor has its own short tutorial, themes apply to it, and it saves with all its layers
+- Drawing editor: click a line or shape with the Select tool to pick it up, and drag any selection to move those pixels (Alt-drag moves a copy, arrow keys nudge it)
+- New Lasso tool, and Smart select (AI): click a subject or draw a rough box around it and the AI finds its exact edge
+- Copy, cut and paste of a selection, and pasting a picture from outside creates a new layer
+- Image editor: pasting or adding a picture no longer changes the size of your canvas

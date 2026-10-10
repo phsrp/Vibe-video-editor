@@ -2,7 +2,8 @@ import { useEffect, useReducer, useRef, useState } from 'react'
 import Icon from './Icon.jsx'
 import { actionFor } from './keybinds.js'
 import { Doc } from './drawing/doc.js'
-import { Stroke, Smudge, mergeBuffer, ellipsePoints, rectPoints, floodMask, maskToCanvas, newCanvas, hexToRgb, rgbToHex } from './drawing/engine.js'
+import { promptFromLoop } from './smartMask.js'
+import { Stroke, Smudge, mergeBuffer, ellipsePoints, rectPoints, floodMask, maskToCanvas, objectMask, newCanvas, hexToRgb, rgbToHex } from './drawing/engine.js'
 import { builtinBrushes } from './drawing/builtinBrushes.js'
 import * as kritaBrush from './drawing/kritaBrush.js'
 const { loadKritaPack } = kritaBrush
@@ -20,7 +21,9 @@ const TOOLS = [
   { id: 'ellipse', icon: 'circle', label: 'Ellipse and circle (O)', key: 'O' },
   { id: 'fill', icon: 'bucket', label: 'Fill with colour (G)', key: 'G' },
   { id: 'eyedropper', icon: 'pipette', label: 'Eyedropper: pick a colour (I)', key: 'I' },
-  { id: 'select', icon: 'select', label: 'Select an area (M)', key: 'M' },
+  { id: 'select', icon: 'select', label: 'Select: click a line or shape, or drag a box (M)', key: 'M' },
+  { id: 'lasso', icon: 'lasso', label: 'Lasso: draw around what to select (Q)', key: 'Q' },
+  { id: 'smart', icon: 'star', label: 'Smart select (AI): click the subject or draw a rough box around it (W)', key: 'W' },
   { id: 'move', icon: 'move', label: 'Move the layer (V)', key: 'V' },
   { id: 'hand', icon: 'hand', label: 'Hand: move the view (H, or hold Space)', key: 'H' },
 ]
@@ -39,6 +42,9 @@ const save = (k, v) => {
     localStorage.setItem(k, JSON.stringify(v))
   } catch {}
 }
+
+// what was copied or cut with Ctrl+C / Ctrl+X: {canvas, x, y} (shared by all drawing tabs)
+let drawClip = null
 
 // the brush packs read so far (shared by all drawing tabs)
 const packCache = new Map()
@@ -98,7 +104,7 @@ export default function DrawingEditor({ tabId, active, initial, binds, onMeta, o
   const [fg, setFgState] = useState(() => load('vibe.draw.fg', '#000000'))
   const [bg, setBg] = useState(() => load('vibe.draw.bg', '#ffffff'))
   const [recent, setRecent] = useState(() => load('vibe.draw.recent', []))
-  const [opts, setOptsState] = useState(() => ({ size: 12, opacity: 1, flow: 1, smoothing: 0.15, spacing: 1, mirrorX: false, mirrorY: false, mousePressure: 0.75, shapeFill: 'none', fillTol: 0.12, fillAll: false, selShape: 'rect', ...load('vibe.draw.opts', {}) }))
+  const [opts, setOptsState] = useState(() => ({ size: 12, opacity: 1, flow: 1, smoothing: 0.15, spacing: 1, mirrorX: false, mirrorY: false, mousePressure: 0.75, shapeFill: 'none', fillTol: 0.12, fillAll: false, selShape: 'rect', smartShape: 'box', smartLayerOnly: false, ...load('vibe.draw.opts', {}) }))
   const optsRef = useRef(opts)
   optsRef.current = opts
   const setOpts = (p) => {
@@ -323,6 +329,7 @@ export default function DrawingEditor({ tabId, active, initial, binds, onMeta, o
       const path = (c) => {
         c.beginPath()
         for (const s of sel.shapes) {
+          if (s.type === 'mask') continue
           if (s.type === 'rect' || s.type === 'all') {
             const p = [S(s.x, s.y), S(s.x + s.w, s.y), S(s.x + s.w, s.y + s.h), S(s.x, s.y + s.h)]
             c.moveTo(p[0].x, p[0].y)
@@ -357,6 +364,39 @@ export default function DrawingEditor({ tabId, active, initial, binds, onMeta, o
       path(g)
       g.stroke()
       g.setLineDash([])
+      // a selection of any shape (a line that was clicked on, something that was moved): tinted, with its box dashed
+      if (sel.shapes.some((s) => s.type === 'mask') && !sel.inverted) {
+        if (!sel._tint) {
+          const t = newCanvas(d.w, d.h)
+          const tg = t.getContext('2d')
+          tg.fillStyle = '#c4a7e7'
+          tg.fillRect(0, 0, d.w, d.h)
+          tg.globalCompositeOperation = 'destination-in'
+          tg.drawImage(sel.mask, 0, 0)
+          sel._tint = t
+        }
+        g.save()
+        g.setTransform(dpr * m.a, dpr * m.b, dpr * m.c, dpr * m.d, dpr * m.e, dpr * m.f)
+        g.globalAlpha = 0.45
+        g.drawImage(sel._tint, 0, 0)
+        g.restore()
+        const b = sel.bounds
+        if (b) {
+          const p = [S(b.x, b.y), S(b.x + b.w, b.y), S(b.x + b.w, b.y + b.h), S(b.x, b.y + b.h)]
+          g.beginPath()
+          g.moveTo(p[0].x, p[0].y)
+          p.slice(1).forEach((q) => g.lineTo(q.x, q.y))
+          g.closePath()
+          g.setLineDash([4, 4])
+          g.strokeStyle = '#000'
+          g.stroke()
+          g.lineDashOffset = 4
+          g.strokeStyle = '#fff'
+          g.stroke()
+          g.lineDashOffset = 0
+          g.setLineDash([])
+        }
+      }
     }
     const pre = liveRef.current && liveRef.current.selDraft
     if (pre) {
@@ -549,9 +589,17 @@ export default function DrawingEditor({ tabId, active, initial, binds, onMeta, o
       useColour(fgRef.current)
       return
     }
-    if (t === 'select') {
-      gesture.current = { kind: 'select', start: p, shape: o.selShape, pts: [{ x: p.x, y: p.y }], mode: e.shiftKey ? 'add' : e.altKey ? 'subtract' : 'replace' }
-      liveRef.current = { selDraft: { type: o.selShape === 'lasso' ? 'lasso' : o.selShape, x: p.x, y: p.y, w: 0, h: 0, pts: [p] } }
+    if (t === 'select' || t === 'lasso' || t === 'smart') {
+      // dragging something that is selected carries it along (Alt: a copy of it)
+      if (d.selection && !e.shiftKey && d.inSelection(p.x, p.y)) {
+        if (!layer || layer.locked || !layer.visible) return flash('Choose an unlocked, visible layer to move what is selected.')
+        const parts = d.liftParts(layer, e.altKey)
+        gesture.current = { kind: 'selmove', layer, parts, start: p, copy: e.altKey, moved: false }
+        return
+      }
+      const shape = t === 'lasso' ? 'lasso' : t === 'smart' ? (o.smartShape === 'loop' ? 'lasso' : 'rect') : o.selShape
+      gesture.current = { kind: 'select', start: p, startScreen: { x: e.clientX, y: e.clientY }, shape, smart: t === 'smart', plain: t !== 'select', pts: [{ x: p.x, y: p.y }], mode: e.shiftKey ? 'add' : e.altKey ? 'subtract' : 'replace', dragged: false }
+      liveRef.current = { selDraft: { type: shape, x: p.x, y: p.y, w: 0, h: 0, pts: [p] } }
       return
     }
     if (t === 'move') {
@@ -696,8 +744,19 @@ export default function DrawingEditor({ tabId, active, initial, binds, onMeta, o
       const p = point(e, rect)
       docRef.current.shiftLayer(gst.layer, gst.before, p.x - gst.start.x, p.y - gst.start.y)
       docRef.current.changed(true)
+    } else if (gst.kind === 'selmove') {
+      const p = point(e, rect)
+      const dx = Math.round(p.x - gst.start.x)
+      const dy = Math.round(p.y - gst.start.y)
+      if (!gst.moved && Math.abs(dx) + Math.abs(dy) < 2) return
+      gst.moved = true
+      gst.dx = dx
+      gst.dy = dy
+      docRef.current.paintMoved(gst.layer, gst.parts, dx, dy)
+      docRef.current.changed(true)
     } else if (gst.kind === 'select') {
       const p = point(e, rect)
+      if (Math.hypot(e.clientX - gst.startScreen.x, e.clientY - gst.startScreen.y) > 4) gst.dragged = true
       if (gst.shape === 'lasso') {
         gst.pts.push({ x: p.x, y: p.y })
         liveRef.current = { selDraft: { type: 'lasso', pts: gst.pts } }
@@ -758,15 +817,59 @@ export default function DrawingEditor({ tabId, active, initial, binds, onMeta, o
     } else if (gst.kind === 'move') {
       const r = { x: 0, y: 0, w: d.w, h: d.h }
       d.commitPixels(gst.layer, r, gst.before, 'Move layer')
+    } else if (gst.kind === 'selmove') {
+      if (gst.moved && (gst.dx || gst.dy)) {
+        d.commitPixels(gst.layer, gst.parts.full, gst.parts.before, gst.copy ? 'Copy selection' : 'Move selection')
+        d.shiftSelection(gst.dx, gst.dy)
+      } else d.paintMoved(gst.layer, gst.parts, 0, 0) // a click: nothing changes
+      if (!gst.moved || (!gst.dx && !gst.dy)) d.changed(true)
     } else if (gst.kind === 'select') {
       const dr = liveRef.current && liveRef.current.selDraft
       liveRef.current = null
-      if (dr) {
+      let done = false
+      if (gst.dragged && dr && !gst.smart) {
         if (dr.type === 'lasso') {
-          if (dr.pts.length > 3) d.setSelection({ type: 'lasso', pts: dr.pts }, gst.mode)
-          else d.setSelection(null)
-        } else if (dr.w > 2 && dr.h > 2) d.setSelection({ type: dr.type, x: dr.x, y: dr.y, w: dr.w, h: dr.h }, gst.mode)
-        else d.setSelection(null)
+          if (dr.pts.length > 3) {
+            d.setSelection({ type: 'lasso', pts: dr.pts }, gst.mode)
+            done = true
+          }
+        } else if (dr.w > 2 && dr.h > 2) {
+          d.setSelection({ type: dr.type, x: dr.x, y: dr.y, w: dr.w, h: dr.h }, gst.mode)
+          done = true
+        }
+      }
+      if (gst.smart) {
+        // the AI finds the exact outline: from a click on the subject, or from a rough box / loop around it
+        let prompt
+        const W = d.w
+        const H = d.h
+        if (gst.dragged && dr && dr.type === 'lasso' && dr.pts.length > 3) {
+          const step = Math.max(1, Math.floor(dr.pts.length / 40))
+          prompt = promptFromLoop(dr.pts.filter((_, i) => i % step === 0).map((q) => [q.x / W, q.y / H]))
+        } else if (gst.dragged && dr && dr.type !== 'lasso' && dr.w > 6 && dr.h > 6) {
+          prompt = promptFromLoop([[dr.x / W, dr.y / H], [(dr.x + dr.w) / W, dr.y / H], [(dr.x + dr.w) / W, (dr.y + dr.h) / H], [dr.x / W, (dr.y + dr.h) / H]])
+        } else if (!gst.dragged) prompt = [{ x: gst.start.x / W, y: gst.start.y / H, label: 1 }]
+        if (prompt) runSmartSelect(prompt, gst.mode)
+        done = true
+      } else if (gst.plain && !gst.dragged) {
+        // a click with the lasso: nothing to take, so the selection goes away
+        if (gst.mode === 'replace') d.setSelection(null)
+        done = true
+      }
+      if (!done) {
+        // a click: take the line, shape or blob that is under it (on this layer, or else on a layer above or below)
+        const reach = Math.max(4, 8 / viewRef.current.zoom)
+        const order = [d.active, ...d.layers.slice().reverse().filter((l) => l !== d.active)].filter((l) => l && l.visible)
+        let hit = null
+        for (const l of order) {
+          hit = objectMask(l.canvas, gst.start.x, gst.start.y, reach)
+          if (hit) {
+            if (l !== d.active) d.setActive(l.id)
+            break
+          }
+        }
+        if (hit) d.setSelectionMask(hit.canvas, hit.bounds, gst.mode)
+        else if (gst.mode === 'replace') d.setSelection(null)
       }
     }
     liveRef.current = null
@@ -789,6 +892,54 @@ export default function DrawingEditor({ tabId, active, initial, binds, onMeta, o
   }, [])
   const onWheelRef = useRef(onWheel)
   onWheelRef.current = onWheel
+
+  // ---- smart select (AI, SAM 2): the model is downloaded once on request
+  const [models, setModels] = useState(null) // {ready, totalBytes, paths}
+  const [gpu, setGpu] = useState(null) // {ok, weak, name}
+  const [dl, setDl] = useState(null) // {received, total} while downloading
+  const [dlErr, setDlErr] = useState('')
+  useEffect(() => {
+    window.api.modelsStatus().then(setModels).catch(() => {})
+    import('./smartMask.js').then((m) => m.gpuInfo()).then(setGpu).catch(() => {})
+    return window.api.onModelsProgress(setDl)
+  }, [])
+  const downloadModel = async () => {
+    setDlErr('')
+    setDl({ received: 0, total: models ? models.totalBytes : 1 })
+    const r = await window.api.modelsDownload()
+    setDl(null)
+    setModels(r)
+    if (r.error) setDlErr(r.error)
+  }
+  const smartBusy = useRef(false)
+  const runSmartSelect = async (prompt, mode) => {
+    const d = docRef.current
+    if (smartBusy.current) return
+    try {
+      const st = await window.api.modelsStatus()
+      const { gpuInfo, findSubjectPrompt } = await import('./smartMask.js')
+      const g = await gpuInfo()
+      if (!g.ok) return flash('Smart select needs a graphics card, and this computer does not seem to have a usable one.')
+      if (!st.ready) return flash('Smart select needs its AI model first: use the Download button in the panel on the right.')
+      smartBusy.current = true
+      flash('Finding the subject… (the first time takes a few seconds)')
+      // what the AI looks at: the whole picture, or only the chosen layer, on white paper
+      const el = newCanvas(d.w, d.h)
+      const eg = el.getContext('2d')
+      eg.fillStyle = '#ffffff'
+      eg.fillRect(0, 0, d.w, d.h)
+      if (optsRef.current.smartLayerOnly && d.active) eg.drawImage(d.active.canvas, 0, 0)
+      else eg.drawImage(d.flatten(), 0, 0)
+      const poly = await findSubjectPrompt({ el, w: d.w, h: d.h, prompt, paths: st.paths })
+      if (!poly) return flash('No subject was found there. Try clicking on it, or draw the box a little bigger.')
+      d.setSelection({ type: 'lasso', pts: poly.map(([x, y]) => ({ x: x * d.w, y: y * d.h })) }, mode)
+      flash('Selected. Drag it to move it, or press Delete to remove it.')
+    } catch (err) {
+      flash('Smart select could not run: ' + String((err && err.message) || err))
+    } finally {
+      smartBusy.current = false
+    }
+  }
 
   // ---- saving, opening, autosave
   const rememberRecent = async (file, d) => {
@@ -901,10 +1052,25 @@ export default function DrawingEditor({ tabId, active, initial, binds, onMeta, o
         } else if (k.toLowerCase() === 'i' && e.shiftKey) {
           e.preventDefault()
           d.invertSelection()
+        } else if ((k.toLowerCase() === 'c' || k.toLowerCase() === 'x') && d.selection && d.active) {
+          e.preventDefault()
+          const c = d.copySelected(d.active)
+          if (c) {
+            drawClip = c
+            if (k.toLowerCase() === 'x') d.clearLayer(d.active.id)
+            flash(k.toLowerCase() === 'x' ? 'Cut. Paste it with Ctrl+V.' : 'Copied. Paste it with Ctrl+V.')
+          }
         }
         return
       }
       if (e.altKey) return
+      // arrow keys slide what is selected by one pixel (Shift: ten)
+      if (d.selection && d.active && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(k)) {
+        e.preventDefault()
+        const s = e.shiftKey ? 10 : 1
+        d.moveSelected(d.active, k === 'ArrowLeft' ? -s : k === 'ArrowRight' ? s : 0, k === 'ArrowUp' ? -s : k === 'ArrowDown' ? s : 0)
+        return
+      }
       if (k === '[' || k === ']') {
         e.preventDefault()
         const s = optsRef.current.size
@@ -938,6 +1104,42 @@ export default function DrawingEditor({ tabId, active, initial, binds, onMeta, o
       window.removeEventListener('keyup', onKeyUp)
     }
   }, [binds])
+
+  // Ctrl+V: a picture from outside (screenshot, copied image) or what was copied here becomes a new layer
+  useEffect(() => {
+    const onPaste = async (e) => {
+      if (!activeRef.current) return
+      const tag = e.target && e.target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      const d = docRef.current
+      const files = [...((e.clipboardData && e.clipboardData.files) || [])].filter((f) => /^image\//.test(f.type))
+      if (files.length) {
+        e.preventDefault()
+        try {
+          const bmp = await createImageBitmap(files[0])
+          const l = d.addLayer('Pasted picture')
+          const k = Math.min(1, d.w / bmp.width, d.h / bmp.height)
+          const w = bmp.width * k
+          const h = bmp.height * k
+          l.canvas.getContext('2d').drawImage(bmp, (d.w - w) / 2, (d.h - h) / 2, w, h)
+          d.changed(true)
+          flash('Picture pasted as a new layer. Use the Move tool to place it.')
+        } catch {
+          flash('That picture could not be pasted.')
+        }
+        return
+      }
+      if (drawClip) {
+        e.preventDefault()
+        const l = d.addLayer('Pasted')
+        l.canvas.getContext('2d').drawImage(drawClip.canvas, drawClip.x, drawClip.y)
+        d.changed(true)
+        flash('Pasted as a new layer. Use the Move tool to place it.')
+      }
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [])
 
   // developer self-test hooks
   if (active) window.__draw = { doc, get brush() { return brushRef.current }, setBrush: pickBrush, setOpts, setFg, setTool, opts: optsRef, view: viewRef, toScreen, toDoc, fit, packs, builtin, flash }
@@ -1094,7 +1296,52 @@ export default function DrawingEditor({ tabId, active, initial, binds, onMeta, o
                   <button className="mini" onClick={() => doc.setSelection(null)} disabled={!doc.selection}>Deselect</button>
                   <button className="mini" onClick={() => doc.invertSelection()} disabled={!doc.selection}>Invert</button>
                 </div>
-                <div className="hint-sm">Painting and fills stay inside the selection. Shift adds to it, Alt takes away.</div>
+                <div className="hint-sm">
+                  <b>Click a line or shape</b> to select it. Drag in empty space to select an area. Then drag the selection to <b>move</b> what is in it (hold Alt to move a copy), or use the arrow keys.
+                  Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste. Painting and fills stay inside the selection. Shift adds to it, Alt takes away.
+                </div>
+              </div>
+            )}
+            {tool === 'lasso' && (
+              <div className="dr-opts">
+                <div className="hint-sm">Draw around what you want and let go. Then drag inside the selection to <b>move those pixels</b> (hold Alt to move a copy). Shift adds another area, Alt takes one away.</div>
+                <div className="btn-row" style={{ flexWrap: 'wrap' }}>
+                  <button className="mini" onClick={() => doc.setSelection({ type: 'all' })}>Select all</button>
+                  <button className="mini" onClick={() => doc.setSelection(null)} disabled={!doc.selection}>Deselect</button>
+                  <button className="mini" onClick={() => doc.invertSelection()} disabled={!doc.selection}>Invert</button>
+                </div>
+              </div>
+            )}
+            {tool === 'smart' && (
+              <div className="dr-opts">
+                <div className="hint-sm">Click the thing you want, or draw a <b>rough</b> box (or loop) around it: the AI finds its exact edge. Then drag it to move it. Shift adds, Alt takes away.</div>
+                <div className="mtop">
+                  <span className="mlabel">Drag draws</span>
+                  <select value={opts.smartShape} onChange={(e) => setOpts({ smartShape: e.target.value })}>
+                    <option value="box">A box</option>
+                    <option value="loop">A loose loop</option>
+                  </select>
+                </div>
+                <div className="mtop">
+                  <label className="chk"><input type="checkbox" checked={!!opts.smartLayerOnly} onChange={(e) => setOpts({ smartLayerOnly: e.target.checked })} /> Look at this layer only</label>
+                </div>
+                {gpu && !gpu.ok && <div className="hint warn">This computer does not seem to have a usable graphics card, so smart select cannot run here. The lasso and the select tool still work.</div>}
+                {gpu && gpu.ok && gpu.weak && <div className="hint warn">This computer’s graphics ({gpu.name || 'basic integrated graphics'}) look basic: smart select will run, but slowly.</div>}
+                {gpu && gpu.ok && !(models && models.ready) && (
+                  <>
+                    <div className="hint-sm">Smart select uses an AI model (about {models ? Math.round(models.totalBytes / 1e6) : 112} MB). It is downloaded once from the internet and then works without it.</div>
+                    {dl ? (
+                      <>
+                        <div className="bar"><div className="bar-fill" style={{ width: Math.min(100, (dl.received / Math.max(1, dl.total)) * 100) + '%' }} /></div>
+                        <div className="hint-sm">Downloading… {Math.round((dl.received / Math.max(1, dl.total)) * 100)}%</div>
+                      </>
+                    ) : (
+                      <button className="mini wide" onClick={downloadModel}><Icon name="download" size={13} /> Download the AI model</button>
+                    )}
+                    {dlErr && <div className="hint warn">{dlErr}</div>}
+                  </>
+                )}
+                {gpu && gpu.ok && models && models.ready && <div className="hint-sm">The AI model is ready.</div>}
               </div>
             )}
             {tool === 'move' && <div className="hint-sm">Drag to slide everything on the chosen layer.</div>}

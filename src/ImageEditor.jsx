@@ -88,7 +88,8 @@ export default function ImageEditor({ tabId, active, initial, binds, onMeta, onN
   const addPictures = (items) => {
     if (!items.length) return
     dispatch({ type: 'addMedia', items })
-    items.forEach((it) => it.type === 'image' && dispatch({ type: 'imgAddImage', mediaId: it.id, fitCanvas: true }))
+    // the canvas keeps the size it was given: a picture is placed on it, it never resizes it
+    items.forEach((it) => it.type === 'image' && dispatch({ type: 'imgAddImage', mediaId: it.id }))
     if (items.some((it) => it.type !== 'image')) flash('Only pictures can be layers here: videos were skipped.')
   }
   // Ctrl+V: a picture from the clipboard (a screenshot, "Copy image" in a browser, or a picture file copied in Explorer) becomes a layer

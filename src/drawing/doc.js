@@ -21,6 +21,12 @@ export const BLEND_MODES = [
 ]
 const blendOp = (b) => (b === 'normal' ? 'source-over' : b)
 
+const unionRect = (a, b) => {
+  if (!a) return b
+  const x = Math.min(a.x, b.x)
+  const y = Math.min(a.y, b.y)
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y }
+}
 let idCounter = 1
 const nextId = () => 'L' + Date.now().toString(36) + (idCounter++).toString(36)
 const MAX_HISTORY = 100
@@ -361,8 +367,96 @@ export class Doc {
     pathOf(g, s)
     g.fill()
     const shapes = old && mode !== 'replace' ? [...old.shapes, s] : [s]
-    this.selection = { mask, shapes, inverted: false }
+    // the box around the selection (used to lift it, copy it, ...)
+    let b
+    if (s.type === 'lasso') {
+      const xs = s.pts.map((p) => p.x)
+      const ys = s.pts.map((p) => p.y)
+      b = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }
+    } else b = { x: Math.min(s.x, s.x + s.w), y: Math.min(s.y, s.y + s.h), w: Math.abs(s.w), h: Math.abs(s.h) }
+    this.selection = { mask, shapes, inverted: false, bounds: old && mode !== 'replace' ? unionRect(old.bounds, b) : b }
     this.changed(false)
+  }
+  // a selection that is any shape at all (a mask picture the size of the drawing): a line that was clicked on, ...
+  setSelectionMask(canvas, bounds, mode = 'replace') {
+    const mask = newCanvas(this.w, this.h)
+    const g = mask.getContext('2d')
+    const old = this.selection
+    if (old && (mode === 'add' || mode === 'subtract')) g.drawImage(old.mask, 0, 0)
+    g.globalCompositeOperation = mode === 'subtract' ? 'destination-out' : 'source-over'
+    g.drawImage(canvas, 0, 0)
+    const keep = old && mode !== 'replace'
+    this.selection = {
+      mask,
+      shapes: keep ? [...old.shapes, { type: 'mask' }] : [{ type: 'mask' }],
+      inverted: false,
+      bounds: keep ? unionRect(old.bounds, bounds) : bounds,
+    }
+    this.changed(false)
+  }
+  // slide the selection (not what is in it) by (dx, dy)
+  shiftSelection(dx, dy) {
+    const s = this.selection
+    if (!s) return
+    const mask = newCanvas(this.w, this.h)
+    mask.getContext('2d').drawImage(s.mask, Math.round(dx), Math.round(dy))
+    const b = s.bounds || { x: 0, y: 0, w: this.w, h: this.h }
+    this.selection = { mask, shapes: [{ type: 'mask' }], inverted: false, bounds: { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h } }
+    this.changed(false)
+  }
+  // is (x, y) inside the selection?
+  inSelection(x, y) {
+    const s = this.selection
+    if (!s || x < 0 || y < 0 || x >= this.w || y >= this.h) return false
+    return s.mask.getContext('2d').getImageData(Math.floor(x), Math.floor(y), 1, 1).data[3] > 8
+  }
+  // The parts needed to lift what is in the selection off a layer: the layer as it was, the layer without the selected part
+  // (the same, when copying), and just the selected part.
+  liftParts(layer, copy = false) {
+    const full = { x: 0, y: 0, w: this.w, h: this.h }
+    const before = this.grab(layer, full)
+    const base = this.grab(layer, full)
+    const lifted = this.grab(layer, full)
+    if (!copy) {
+      const bg = base.getContext('2d')
+      bg.globalCompositeOperation = 'destination-out'
+      bg.drawImage(this.selection.mask, 0, 0)
+    }
+    const lg = lifted.getContext('2d')
+    lg.globalCompositeOperation = 'destination-in'
+    lg.drawImage(this.selection.mask, 0, 0)
+    return { before, base, lifted, full }
+  }
+  paintMoved(layer, parts, dx, dy) {
+    const g = layer.canvas.getContext('2d')
+    g.save()
+    g.setTransform(1, 0, 0, 1, 0, 0)
+    g.globalCompositeOperation = 'source-over'
+    g.globalAlpha = 1
+    g.clearRect(0, 0, this.w, this.h)
+    g.drawImage(parts.base, 0, 0)
+    g.drawImage(parts.lifted, Math.round(dx), Math.round(dy))
+    g.restore()
+  }
+  // move (or copy) what is selected by (dx, dy) in one go, as one undo step
+  moveSelected(layer, dx, dy, copy = false) {
+    if (!this.selection || !layer || layer.locked) return
+    const parts = this.liftParts(layer, copy)
+    this.paintMoved(layer, parts, dx, dy)
+    this.commitPixels(layer, parts.full, parts.before, copy ? 'Copy selection' : 'Move selection')
+    this.shiftSelection(dx, dy)
+  }
+  // the selected pixels as a picture of their own: {canvas, x, y} (null when nothing is selected)
+  copySelected(layer) {
+    if (!this.selection || !layer) return null
+    const r = this.clampRect(this.selection.bounds || { x: 0, y: 0, w: this.w, h: this.h })
+    if (!r) return null
+    const c = newCanvas(r.w, r.h)
+    const g = c.getContext('2d')
+    g.drawImage(layer.canvas, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h)
+    g.globalCompositeOperation = 'destination-in'
+    g.drawImage(this.selection.mask, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h)
+    return { canvas: c, x: r.x, y: r.y }
   }
   invertSelection() {
     if (!this.selection) return
@@ -372,7 +466,7 @@ export class Doc {
     g.fillRect(0, 0, this.w, this.h)
     g.globalCompositeOperation = 'destination-out'
     g.drawImage(this.selection.mask, 0, 0)
-    this.selection = { mask, shapes: [{ type: 'all', x: 0, y: 0, w: this.w, h: this.h }, ...this.selection.shapes], inverted: !this.selection.inverted }
+    this.selection = { mask, shapes: [{ type: 'all', x: 0, y: 0, w: this.w, h: this.h }, ...this.selection.shapes], inverted: !this.selection.inverted, bounds: { x: 0, y: 0, w: this.w, h: this.h } }
     this.changed(false)
   }
 

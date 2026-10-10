@@ -114,6 +114,11 @@ export const DRAWING_STEPS = [
     text: 'Brush, eraser, smudge, line, rectangle, ellipse, fill, eyedropper and selection. Hover a tool to see its key. Hold Space to move around, and Alt to pick a colour.',
   },
   {
+    target: '.toolbar-v',
+    title: 'Select and move things',
+    text: 'Select clicks a line or shape. Lasso selects what you draw around. Smart select (AI) finds the exact edge of a subject from a click or a rough box. Then drag inside a selection to move those pixels, or hold Alt to move a copy.',
+  },
+  {
     target: '.dr-view',
     title: 'The canvas',
     text: 'Use the mouse wheel to zoom and the Space key (or the middle mouse button) to move around. The ring shows how big your brush is.',

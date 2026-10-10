@@ -720,6 +720,73 @@ export function floodMask(src, sx, sy, tolerance = 0.15, limit = null) {
   return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1, mask, stride: w }
 }
 
+// The line / shape / blob that is under (x, y): every painted pixel that is joined to it (touching, also diagonally).
+// If nothing is painted exactly there, the nearest painted pixel within `reach` pixels is used.
+// Returns { canvas (picture-size mask), bounds: {x,y,w,h}, hit: {x,y} } or null.
+export function objectMask(src, x, y, reach = 6, minAlpha = 12) {
+  const w = src.width
+  const h = src.height
+  const id = src.getContext('2d').getImageData(0, 0, w, h)
+  const d = id.data
+  const cx = Math.floor(x)
+  const cy = Math.floor(y)
+  let sx = -1
+  let sy = -1
+  let best = 1e9
+  const r = Math.max(0, Math.ceil(reach))
+  for (let yy = Math.max(0, cy - r); yy <= Math.min(h - 1, cy + r); yy++) {
+    for (let xx = Math.max(0, cx - r); xx <= Math.min(w - 1, cx + r); xx++) {
+      if (d[(yy * w + xx) * 4 + 3] < minAlpha) continue
+      const dd = (xx - cx) * (xx - cx) + (yy - cy) * (yy - cy)
+      if (dd < best && dd <= r * r) {
+        best = dd
+        sx = xx
+        sy = yy
+      }
+    }
+  }
+  if (sx < 0) return null
+  const seen = new Uint8Array(w * h)
+  const stack = [sy * w + sx]
+  seen[sy * w + sx] = 1
+  let minX = sx
+  let maxX = sx
+  let minY = sy
+  let maxY = sy
+  while (stack.length) {
+    const i = stack.pop()
+    const px = i % w
+    const py = (i - px) / w
+    if (px < minX) minX = px
+    if (px > maxX) maxX = px
+    if (py < minY) minY = py
+    if (py > maxY) maxY = py
+    for (let oy = -1; oy <= 1; oy++) {
+      const qy = py + oy
+      if (qy < 0 || qy >= h) continue
+      for (let ox = -1; ox <= 1; ox++) {
+        const qx = px + ox
+        if (qx < 0 || qx >= w || (!ox && !oy)) continue
+        const j = qy * w + qx
+        if (seen[j] || d[j * 4 + 3] < minAlpha) continue
+        seen[j] = 1
+        stack.push(j)
+      }
+    }
+  }
+  const bw = maxX - minX + 1
+  const bh = maxY - minY + 1
+  const piece = new ImageData(bw, bh)
+  for (let yy = 0; yy < bh; yy++) {
+    for (let xx = 0; xx < bw; xx++) {
+      if (seen[(minY + yy) * w + minX + xx]) piece.data[(yy * bw + xx) * 4 + 3] = 255
+    }
+  }
+  const cv = mk(w, h)
+  cv.getContext('2d').putImageData(piece, minX, minY)
+  return { canvas: cv, bounds: { x: minX, y: minY, w: bw, h: bh }, hit: { x: sx, y: sy } }
+}
+
 // a filled-in mask as a canvas painted with one colour (grown by one pixel so the edges close up nicely)
 export function maskToCanvas(m, colour, grow = 1) {
   const x0 = Math.max(0, m.x - grow)
