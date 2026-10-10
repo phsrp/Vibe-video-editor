@@ -1,5 +1,3 @@
-- BIG UPDATE: captions from speech. One button turns the words in your video into text clips, timed to the speech, and saves a subtitles file (.srt). A speech model (about 200 MB) is downloaded once, then it works offline
-- New: smooth preview for big videos. 4K and heavy videos get a small copy made in the background, so the preview plays and jumps around smoothly (the export always uses your original)
-- New: audio clean-up for each clip: noise reduction, cutting low rumble, and voice presets
-- New: preview quality (Full, Half, Quarter, Auto) in the preview bar
-- New: paste pictures into the image editor with Ctrl+V
+- The inspector now has tabs: Clip, Look, Text, Audio and Transition. Only the tabs that fit the selected clip show, and a dot marks a section that has changes
+- Audio waveforms follow each clip's volume (parts that would be too loud are drawn in gold)
+- The first-time tutorial is updated for the new inspector
