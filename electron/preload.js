@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld('api', {
   saveThumb: (o) => ipcRenderer.invoke('thumb:save', o),
   savePastedPicture: (o) => ipcRenderer.invoke('picture:savePasted', o),
   cleanAudio: (o) => ipcRenderer.invoke('audio:clean', o),
+  storageInfo: () => ipcRenderer.invoke('storage:info'),
+  storageClear: (what) => ipcRenderer.invoke('storage:clear', what),
   whisperStatus: () => ipcRenderer.invoke('whisper:status'),
   whisperDownload: () => ipcRenderer.invoke('whisper:download'),
   onWhisperProgress: (cb) => {

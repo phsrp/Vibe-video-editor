@@ -293,6 +293,49 @@ function makeProxy({ file, id, duration }) {
     })
   })
 }
+// Settings > Storage: what the app keeps on this PC besides your projects, and clearing it
+const dirStats = (dir) => {
+  let count = 0
+  let bytes = 0
+  const walk = (d) => {
+    let names = []
+    try {
+      names = fs.readdirSync(d, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of names) {
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) walk(p)
+      else {
+        try {
+          bytes += fs.statSync(p).size
+          count++
+        } catch {}
+      }
+    }
+  }
+  walk(dir)
+  return { count, bytes }
+}
+const storageDirs = () => ({
+  proxies: path.join(app.getPath('userData'), 'proxies'),
+  cleaned: path.join(app.getPath('userData'), 'cleaned'),
+  reverse: path.join(app.getPath('userData'), 'reverse'),
+  sam2: path.join(modelsDir(), 'sam2'),
+  whisper: path.join(modelsDir(), 'whisper'),
+})
+ipcMain.handle('storage:info', () => Object.fromEntries(Object.entries(storageDirs()).map(([k, d]) => [k, dirStats(d)])))
+ipcMain.handle('storage:clear', (_e, what) => {
+  const d = storageDirs()[what]
+  if (!d) return false
+  // never while a copy of it is being made
+  if (what === 'proxies' && proxyJobs.size) return false
+  try {
+    fs.rmSync(d, { recursive: true, force: true })
+  } catch {}
+  return true
+})
 // which of these media already have a smooth copy: {id: path or null}
 ipcMain.handle('proxy:status', (_e, ids) => Object.fromEntries((ids || []).map((id) => [id, fs.existsSync(proxyFile(String(id).replace(/[^\w]/g, ''))) ? proxyFile(String(id).replace(/[^\w]/g, '')) : null])))
 ipcMain.handle('proxy:info', () => {

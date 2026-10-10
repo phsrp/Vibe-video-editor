@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createRenderer } from './glRenderer.js'
 import { evalTransform, evalWarp } from './motion.js'
 import { maskAt } from './masks.js'
+import { routeOutput, onDevices } from './audioDevices.js'
 import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl, srcAt, speedOf, aspectRatio, previewSize, streamAudioOf, cleanActive, envAt, fadeAt } from './state.js'
 import WarpOverlay from './WarpOverlay.jsx'
 import { drawText, loadFont } from './textRender.js'
@@ -12,7 +13,11 @@ import MaskOverlay from './MaskOverlay.jsx'
 // above 100% (up to 200%). A plain <audio> element can only be turned down.
 let audioCtx = null
 const getCtx = () => {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    routeOutput(audioCtx) // the speakers chosen in Settings
+    onDevices(() => routeOutput(audioCtx))
+  }
   return audioCtx
 }
 

@@ -11,6 +11,8 @@ import ExportTab from './ExportTab.jsx'
 import ColourTab from './ColourTab.jsx'
 import { cancelExport } from './exporter.js'
 import { loadBinds, saveBinds } from './keybinds.js'
+import { applyTheme, findTheme } from './themes.js'
+import { setDevices } from './audioDevices.js'
 
 let tabCounter = 0
 const newId = () => `p${Date.now().toString(36)}${tabCounter++}`
@@ -38,12 +40,20 @@ export default function App() {
     }
   })
 
+  // the theme in use: one of the two that come with the editor, or one the user made (kept in the settings)
+  const customThemes = settings.themes || []
+  const activeTheme = findTheme(theme, customThemes)
+  const [preview, setPreview] = useState(null) // {theme, kind}: a theme being tried out in the real editors
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
+    applyTheme(preview ? preview.theme : activeTheme)
     try {
       localStorage.setItem('vibe.theme', theme)
     } catch {}
-  }, [theme])
+  }, [preview, theme, JSON.stringify(activeTheme)])
+  // the microphone and speakers chosen in the settings
+  useEffect(() => {
+    setDevices({ out: settings.audioOutputId, inp: settings.audioInputId })
+  }, [settings.audioOutputId, settings.audioInputId])
   useEffect(() => {
     saveBinds(binds)
   }, [binds])
@@ -59,6 +69,15 @@ export default function App() {
   }, [])
   const setSettings = async (patch) => setSettingsState(await window.api.setSettings(patch))
   const checkNow = () => window.api.checkForUpdates()
+  // try a theme in the real video editor / image editor (the settings close, a bar offers the way back)
+  const previewTheme = (kind, t) => {
+    setPreview({ theme: t, kind })
+    setShowSettings(false)
+    const tab = tabs.find((x) => x.kind === kind)
+    if (tab) setActiveId(tab.id)
+    else if (kind === 'image') newTab({ canvas: { w: 1280, h: 720, bg: '#ffffff' } }, 'image')
+    else newTab(null, 'video')
+  }
   const showPopup = !hidden && (['available', 'downloading', 'ready'].includes(update.state) || (update.state === 'error' && update.during === 'download'))
   const updatePending = ['snoozed'].includes(update.state) || (hidden && ['available', 'downloading', 'ready'].includes(update.state))
 
@@ -387,11 +406,25 @@ export default function App() {
           setSettings={setSettings}
           theme={theme}
           setTheme={setTheme}
+          themes={customThemes}
+          saveThemes={(list) => setSettings({ themes: list })}
+          onPreviewTheme={previewTheme}
           version={version}
           onCheck={checkNow}
           update={update}
           onClose={() => setShowSettings(false)}
         />
+      )}
+      {preview && (
+        <div className="theme-previewbar">
+          <span>
+            Trying <b>{preview.theme.name}</b> in the {preview.kind === 'image' ? 'image' : 'video'} editor
+          </span>
+          <button className={preview.kind === 'video' ? 'on' : ''} onClick={() => previewTheme('video', preview.theme)}>Video editor</button>
+          <button className={preview.kind === 'image' ? 'on' : ''} onClick={() => previewTheme('image', preview.theme)}>Image editor</button>
+          <button className="primary" onClick={() => { setPreview(null); setShowSettings(true) }}>Back to settings</button>
+          <button onClick={() => setPreview(null)} title="Go back to the theme that is in use">Stop</button>
+        </div>
       )}
     </div>
   )

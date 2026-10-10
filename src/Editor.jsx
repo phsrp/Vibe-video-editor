@@ -5,6 +5,7 @@ import Timeline from './Timeline.jsx'
 import KeybindDialog from './KeybindDialog.jsx'
 import HistoryDialog from './HistoryDialog.jsx'
 import CaptionDialog from './CaptionDialog.jsx'
+import { openMicrophone } from './audioDevices.js'
 import TranscriptDialog from './TranscriptDialog.jsx'
 import Inspector from './Inspector.jsx'
 import LibraryPanel from './LibraryPanel.jsx'
@@ -351,7 +352,7 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
     if (recRef.current || rec) return stopRecording()
     let stream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+      stream = await openMicrophone() // the microphone chosen in Settings
     } catch {
       return flash('Could not use the microphone. In Windows open Settings > Privacy & security > Microphone and allow desktop apps to use it.')
     }
