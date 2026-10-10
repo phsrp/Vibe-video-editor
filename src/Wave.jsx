@@ -31,7 +31,9 @@ const RATE = 200 // values per second, see electron/main.js
 
 // Draws the part [from, to] (seconds of the file) of the file's waveform over a clip that is `width` px wide
 // and starts `left` px into the lane; `view` = {l, r}: the lane pixels that are on screen.
-export default function Wave({ file, from, to, width, left, view, height }) {
+// gain = the clip's volume (1 = 100%): the waveform grows and shrinks with it; bars that would be taller than the
+// clip (above about 100% loudness) are cut off and drawn in a warm colour.
+export default function Wave({ file, from, to, width, left, view, height, gain = 1 }) {
   const ref = useRef(null)
   const peaks = usePeaks(file)
   const x0 = Math.max(0, Math.floor(view.l - left))
@@ -45,7 +47,8 @@ export default function Wave({ file, from, to, width, left, view, height }) {
     cv.width = cw
     cv.height = Math.round(height * dpr)
     const g = cv.getContext('2d')
-    g.fillStyle = getComputedStyle(cv).color
+    const color = getComputedStyle(cv).color
+    g.fillStyle = color
     const mid = cv.height / 2
     const span = Math.max(0.001, to - from)
     const secPerPx = span / width
@@ -61,10 +64,14 @@ export default function Wave({ file, from, to, width, left, view, height }) {
       let m = 0
       for (let i = a; i < b && i < peaks.length; i++) if (peaks[i] > m) m = peaks[i]
       if (!m) continue
-      const h = Math.max(1, Math.round((m / 255) * (cv.height - 2)))
+      const full = cv.height - 2
+      const want = (m / 255) * full * gain
+      const h = Math.max(1, Math.round(Math.min(full, want)))
+      if (want > full) g.fillStyle = '#f6c177' // too loud for the clip: it would be clipped
       g.fillRect(x, Math.round(mid - h / 2), 1, h)
+      if (want > full) g.fillStyle = color
     }
-  }, [peaks, from, to, width, x0, w, height])
+  }, [peaks, from, to, width, x0, w, height, gain])
   if (!file || w <= 0) return null
   return <canvas ref={ref} className="wave" style={{ left: x0, width: w, height }} />
 }

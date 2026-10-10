@@ -884,7 +884,7 @@ export default function Timeline({ onCaptions, height, state, dispatch, zoom, se
                   style={{ left: c.start * zoom, width: Math.max(2, c.dur * zoom) }}
                   onPointerDown={(e) => clickStream(e, c, n)}
                 >
-                  <Wave file={(m.audioFiles || [])[n]} from={c.in} to={c.out} width={c.dur * zoom} left={c.start * zoom} view={view} height={H_AUDIO - 12} />
+                  <Wave file={(m.audioFiles || [])[n]} from={c.in} to={c.out} width={c.dur * zoom} left={c.start * zoom} view={view} height={H_AUDIO - 12} gain={(st.volume ?? 1) * streamAudioOf(c, n).volume} />
                   <span>{m.name}</span>
                 </div>
               )
@@ -924,7 +924,7 @@ export default function Timeline({ onCaptions, height, state, dispatch, zoom, se
                     onPointerDown={(e) => startMoveAudio(e, a)}
                     title={clipAudioName(a)}
                   >
-                    <Wave file={audioSource(a, am)} from={a.in} to={a.out} width={Math.max(6, a.dur * zoom)} left={a.start * zoom} view={view} height={H_AUDIO - 12} />
+                    <Wave file={audioSource(a, am)} from={a.in} to={a.out} width={Math.max(6, a.dur * zoom)} left={a.start * zoom} view={view} height={H_AUDIO - 12} gain={(t.volume ?? 1) * (a.volume ?? 1)} />
                     <div className="handle left" onPointerDown={(e) => startTrimAudio(e, a, 'in')} />
                     <span>{a.groupId && <Icon name="link" size={11} />}{clipAudioName(a)}</span>
                     <div className="handle right" onPointerDown={(e) => startTrimAudio(e, a, 'out')} />
