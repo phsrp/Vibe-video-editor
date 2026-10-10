@@ -1,3 +1,7 @@
-- The inspector now has tabs: Clip, Look, Text, Audio and Transition. Only the tabs that fit the selected clip show, and a dot marks a section that has changes
-- Audio waveforms follow each clip's volume (parts that would be too loud are drawn in gold)
-- The first-time tutorial is updated for the new inspector
+- New settings window with four pages: General, Appearance, Sound and Storage
+- Make your own colour themes (the two built-in ones stay), see them in a live preview, and try them in the real video editor and image editor
+- Choose your microphone (voice-overs) and your speakers or headphones (preview)
+- Audio clips have a volume line you can add points to and drag, plus fade-in and fade-out handles
+- Exports are written under a temporary name and checked (length, picture, sound, every frame) before they take the real name, so a bad export can never replace a good file
+- New quick mask tracking that follows the movement of the picture, with no model or graphics card needed
+- Captions now have exact word timing, and Edit by text lets you cut the video by deleting words, filler words (um, uh) and long pauses. The speech model is replaced by a better one (one new download of about 200 MB)
