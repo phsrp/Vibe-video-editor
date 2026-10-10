@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { keyTimes } from './motion.js'
 import Icon from './Icon.jsx'
 import Wave from './Wave.jsx'
+import VolumeEdit from './VolumeEdit.jsx'
 import MiniMap from './MiniMap.jsx'
 import { maskSpan } from './masks.js'
-import { srcAt, tlOf, speedOf, lenOf, layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKeys, audioSource, fmtTime, fmtDur, toUrl, uid, hasAttached, canGroup, canUngroup, hasClipboard, streamAudioOf } from './state.js'
+import { srcAt, tlOf, speedOf, lenOf, layout, audioLayout, overlayLayout, streamCount, projectDuration, rowKeys, audioSource, fmtTime, fmtDur, toUrl, uid, hasAttached, canGroup, canUngroup, hasClipboard, streamAudioOf, envAt, fadeAt } from './state.js'
 import { labelColor } from './labels.js'
 
 const TRACK_PAD = 12
@@ -876,6 +877,10 @@ export default function Timeline({ onCaptions, height, state, dispatch, zoom, se
               const m = mediaOf(c)
               if (!hasAttached(c, m, n)) return null
               const sid = `sa:${c.id}:${n}`
+              const own = streamAudioOf(c, n)
+              const sp = speedOf(c)
+              const rel = (s) => (c.reverse ? c.out - s : s - c.in) / sp // seconds from the start of the clip
+              const gainFn = (s) => envAt(own.env, s) * fadeAt(rel(s), c.dur, own.fadeIn, own.fadeOut)
               return (
                 <div
                   key={c.id}
@@ -884,7 +889,21 @@ export default function Timeline({ onCaptions, height, state, dispatch, zoom, se
                   style={{ left: c.start * zoom, width: Math.max(2, c.dur * zoom) }}
                   onPointerDown={(e) => clickStream(e, c, n)}
                 >
-                  <Wave file={(m.audioFiles || [])[n]} from={c.in} to={c.out} width={c.dur * zoom} left={c.start * zoom} view={view} height={H_AUDIO - 12} gain={(st.volume ?? 1) * streamAudioOf(c, n).volume} />
+                  <Wave file={(m.audioFiles || [])[n]} from={c.in} to={c.out} width={c.dur * zoom} left={c.start * zoom} view={view} height={H_AUDIO - 12} gain={(st.volume ?? 1) * own.volume} gainFn={gainFn} shapeKey={JSON.stringify([own.env, own.fadeIn, own.fadeOut])} />
+                  {sel.has(sid) && (
+                    <VolumeEdit
+                      width={c.dur * zoom - 2}
+                      height={H_AUDIO - 12}
+                      dur={c.dur}
+                      env={own.env || []}
+                      fadeIn={own.fadeIn}
+                      fadeOut={own.fadeOut}
+                      toX={(s) => rel(s) * zoom}
+                      toKey={(x) => (c.reverse ? c.out - (x / zoom) * sp : c.in + (x / zoom) * sp)}
+                      onStart={() => dispatch({ type: 'checkpoint' })}
+                      onChange={(patch, live) => dispatch({ type: 'setClipAudio', ids: [sid], patch, live })}
+                    />
+                  )}
                   <span>{m.name}</span>
                 </div>
               )
@@ -915,6 +934,7 @@ export default function Timeline({ onCaptions, height, state, dispatch, zoom, se
               .filter((a) => a.trackId === t.id)
               .map((a) => {
                 const am = state.media.find((x) => x.id === a.mediaId)
+                const gainFn = (s) => envAt(a.env, s) * fadeAt(s - a.in, a.dur, a.fadeIn || 0, a.fadeOut || 0)
                 return (
                   <div
                     key={a.id}
@@ -924,7 +944,21 @@ export default function Timeline({ onCaptions, height, state, dispatch, zoom, se
                     onPointerDown={(e) => startMoveAudio(e, a)}
                     title={clipAudioName(a)}
                   >
-                    <Wave file={audioSource(a, am)} from={a.in} to={a.out} width={Math.max(6, a.dur * zoom)} left={a.start * zoom} view={view} height={H_AUDIO - 12} gain={(t.volume ?? 1) * (a.volume ?? 1)} />
+                    <Wave file={audioSource(a, am)} from={a.in} to={a.out} width={Math.max(6, a.dur * zoom)} left={a.start * zoom} view={view} height={H_AUDIO - 12} gain={(t.volume ?? 1) * (a.volume ?? 1)} gainFn={gainFn} shapeKey={JSON.stringify([a.env, a.fadeIn, a.fadeOut])} />
+                    {sel.has(a.id) && (
+                      <VolumeEdit
+                        width={Math.max(6, a.dur * zoom) - 2}
+                        height={H_AUDIO - 12}
+                        dur={a.dur}
+                        env={a.env || []}
+                        fadeIn={a.fadeIn || 0}
+                        fadeOut={a.fadeOut || 0}
+                        toX={(s) => (s - a.in) * zoom}
+                        toKey={(x) => a.in + x / zoom}
+                        onStart={() => dispatch({ type: 'checkpoint' })}
+                        onChange={(patch, live) => dispatch({ type: 'setClipAudio', ids: [a.id], patch, live })}
+                      />
+                    )}
                     <div className="handle left" onPointerDown={(e) => startTrimAudio(e, a, 'in')} />
                     <span>{a.groupId && <Icon name="link" size={11} />}{clipAudioName(a)}</span>
                     <div className="handle right" onPointerDown={(e) => startTrimAudio(e, a, 'out')} />

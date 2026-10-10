@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createRenderer } from './glRenderer.js'
 import { evalTransform, evalWarp } from './motion.js'
 import { maskAt } from './masks.js'
-import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl, srcAt, speedOf, aspectRatio, previewSize, streamAudioOf, cleanActive } from './state.js'
+import { layout, overlayLayout, audioLayout, audioSource, totalDuration, projectDuration, videoRowsBottomUp, toUrl, srcAt, speedOf, aspectRatio, previewSize, streamAudioOf, cleanActive, envAt, fadeAt } from './state.js'
 import WarpOverlay from './WarpOverlay.jsx'
 import { drawText, loadFont } from './textRender.js'
 import TransformOverlay from './TransformOverlay.jsx'
@@ -137,6 +137,7 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
             if (nx && nx.ov > 0 && t >= nx.start) fade *= 1 - (t - nx.start) / nx.ov
             const st = s.streamSettings[n] || {}
             const own = streamAudioOf(c, n) // this clip's own volume and clean-up
+            fade *= envAt(own.env, srcAt(c, t)) * fadeAt(t - c.start, c.dur, own.fadeIn, own.fadeOut) // its volume curve and fade handles
             want.set(key, { file: cleanedFile(f, own.clean), src: srcAt(c, t), rate: speedOf(c), vol: st.mute || own.mute ? 0 : (st.volume ?? 1) * own.volume * fade })
           } else if (upcoming) soon.push({ key, file: cleanedFile(f, streamAudioOf(c, n).clean), src: c.in })
         })
@@ -148,13 +149,13 @@ export default function Preview({ state, dispatch, transitions, onCompiled, acti
         valid.add(key)
         const tr = s.audioTracks.find((x) => x.id === a.trackId)
         const active = t >= a.start && t < a.start + a.dur
-        if (active && !hid.has('a:' + a.trackId)) want.set(key, { file: cleanedFile(file, a.clean), src: a.in + (t - a.start), vol: (tr ? (tr.mute ? 0 : tr.volume) : 1) * (a.mute ? 0 : a.volume ?? 1) })
+        if (active && !hid.has('a:' + a.trackId)) want.set(key, { file: cleanedFile(file, a.clean), src: a.in + (t - a.start), vol: (tr ? (tr.mute ? 0 : tr.volume) : 1) * (a.mute ? 0 : a.volume ?? 1) * envAt(a.env, a.in + (t - a.start)) * fadeAt(t - a.start, a.dur, a.fadeIn || 0, a.fadeOut || 0) })
         else if (a.start > t && a.start - t < 3) soon.push({ key, file: cleanedFile(file, a.clean), src: a.in })
       }
       for (const [key, w] of want) {
         const ae = getAudio(key, w.file)
         const el = ae.el
-        ae.gain.gain.value = Math.max(0, Math.min(2, w.vol))
+        ae.gain.gain.value = Math.max(0, Math.min(4, w.vol))
         if (w.rate && el.playbackRate !== w.rate) el.playbackRate = w.rate
         if (s.playing) {
           if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {})

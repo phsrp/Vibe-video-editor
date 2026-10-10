@@ -526,3 +526,17 @@ input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var
 .tr-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .tr-pause { display: inline-flex; gap: 6px; align-items: center; color: var(--dim); }
 .tr-pause input { width: 58px; }
+
+/* volume line and fade handles of a selected audio clip */
+.aclip .vol-edit { position: absolute; left: 0; top: 50%; transform: translateY(-50%); pointer-events: none; overflow: visible; }
+.vol-mid { stroke: rgba(255,255,255,.25); stroke-dasharray: 3 4; }
+.vol-line { fill: none; stroke: #f6c177; stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 1px 1px #000a); pointer-events: none; }
+.vol-hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: ns-resize; }
+.vol-key { fill: #f6c177; stroke: #191724; stroke-width: 1.5; pointer-events: all; cursor: grab; }
+.vol-key:hover { fill: #fff; }
+.vol-fade { fill: #fff; stroke: #191724; stroke-width: 1; pointer-events: all; cursor: ew-resize; opacity: .9; }
+
+/* the check of a finished export */
+.exp-check { margin-top: 8px; padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.5; background: var(--panel2); border: 1px solid var(--line); }
+.exp-check.ok { border-color: #31748f; }
+.exp-check.bad { border-color: var(--love, #eb6f92); }

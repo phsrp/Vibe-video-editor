@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { layout, overlayLayout, soleVideoClip, srcAt, tlOf, speedOf, fmtDur, aspectRatio, streamAudioOf, audioClipVol, cleanActive, hasAttached } from './state.js'
+import { layout, overlayLayout, soleVideoClip, srcAt, tlOf, speedOf, fmtDur, aspectRatio, streamAudioOf, audioClipVol, cleanActive, hasAttached, envAt } from './state.js'
 import Icon from './Icon.jsx'
 import { PROPS, evalProp, keyAt, KEY_EPS } from './motion.js'
 import EaseEditor from './EaseEditor.jsx'
@@ -511,12 +511,16 @@ function AudioPanel({ state, dispatch, ids: idsProp, embedded }) {
   let laneVol = 1
   let resetLane = null
   let source = null // what the loudness button measures: {file, from, to}
+  let playSrc = null
   if (id.startsWith('sa:')) {
     const n = +id.split(':')[2]
     const vc = state.clips.find((x) => x.id === id.split(':')[1])
     const vm = vc && state.media.find((m) => m.id === vc.mediaId)
     if (vc && vm && (vm.audioFiles || [])[n]) source = { file: vm.audioFiles[n], from: vc.in, to: vc.out }
-    if (vc) st = streamAudioOf(vc, n)
+    if (vc) {
+      st = streamAudioOf(vc, n)
+      playSrc = srcAt(vc, state.playhead) // where the playhead is, in seconds of the file
+    }
     const lane = state.streamSettings[n] || {}
     name = lane.name || `Video audio ${n + 1}`
     laneVol = lane.volume ?? 1
@@ -527,7 +531,10 @@ function AudioPanel({ state, dispatch, ids: idsProp, embedded }) {
     const am = a && state.media.find((m) => m.id === a.mediaId)
     const af = a && am ? (a.stream != null ? (am.audioFiles || [])[a.stream] : am.path) : null
     if (af) source = { file: af, from: a.in, to: a.out }
-    if (a) st = audioClipVol(a)
+    if (a) {
+      st = audioClipVol(a)
+      playSrc = a.in + (state.playhead - a.start)
+    }
     if (tr) {
       name = tr.name
       laneVol = tr.volume ?? 1
@@ -576,6 +583,24 @@ function AudioPanel({ state, dispatch, ids: idsProp, embedded }) {
         {pct !== 100 && <button className="mini wide" onClick={() => patch({ volume: 1 })}>Reset</button>}
       </div>
       <div className="hint left">{note}</div>
+      <div className="mtop">
+        <span className="mlabel">Fade in / out</span>
+        <span className="minput speed-in">
+          <input type="number" min="0" max="30" step="0.1" value={+(st.fadeIn || 0).toFixed(2)} onChange={(e) => patch({ fadeIn: Math.max(0, +e.target.value || 0) })} title="Fade in (seconds)" />
+          <span className="unit">s</span>
+        </span>
+        <span className="minput speed-in">
+          <input type="number" min="0" max="30" step="0.1" value={+(st.fadeOut || 0).toFixed(2)} onChange={(e) => patch({ fadeOut: Math.max(0, +e.target.value || 0) })} title="Fade out (seconds)" />
+          <span className="unit">s</span>
+        </span>
+      </div>
+      <div className="mtop btnrow">
+        <button className="mini wide" disabled={many || playSrc == null} onClick={() => patch({ env: [...(st.env || []), { t: playSrc, v: envAt(st.env, playSrc) }].sort((p, q) => p.t - q.t) })} title="Adds a point on the volume line at the playhead">
+          Add volume keyframe here
+        </button>
+        <button className="mini wide" disabled={!(st.env && st.env.length)} onClick={() => patch({ env: [] })}>Clear the volume line</button>
+      </div>
+      <div className="hint left">Select the clip on the timeline: a line shows over its waveform. Click the line to add a point, drag a point up or down, double-click it to remove it. The small squares in the top corners fade the sound in and out.</div>
       {resetLane && Math.abs(laneVol - 1) > 0.005 && (
         <div className="mtop">
           <span className="hint left">This lane also has an older volume setting of {Math.round(laneVol * 100)}%.</span>

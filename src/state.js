@@ -180,17 +180,41 @@ export const hasAttached = (c, media, n) =>
 // The volume and mute of ONE clip's sound: attached stream n of a video clip (clip.av[n]), or a detached audio clip
 // (its own volume / mute). It sits on top of the lane / track setting, which is 100% unless an older project changed it.
 // (clean = the clip's audio clean-up: {nr, rumble, voice}, see electron/audioClean.js)
+// env = the volume curve: keyframes [{t (seconds of the file), v (0..2, multiplies the volume)}]; fadeIn / fadeOut = seconds
 export const streamAudioOf = (c, n) => {
   const s = (c.av && c.av[n]) || {}
-  return { volume: s.volume ?? 1, mute: !!s.mute, clean: s.clean }
+  return { volume: s.volume ?? 1, mute: !!s.mute, clean: s.clean, env: s.env, fadeIn: s.fadeIn || 0, fadeOut: s.fadeOut || 0 }
 }
-export const audioClipVol = (a) => ({ volume: a.volume ?? 1, mute: !!a.mute, clean: a.clean })
+export const audioClipVol = (a) => ({ volume: a.volume ?? 1, mute: !!a.mute, clean: a.clean, env: a.env, fadeIn: a.fadeIn || 0, fadeOut: a.fadeOut || 0 })
+// the multiplier of a volume curve at second s of the file (flat before the first and after the last keyframe)
+export function envAt(env, s) {
+  if (!env || !env.length) return 1
+  if (s <= env[0].t) return env[0].v
+  for (let i = 1; i < env.length; i++) {
+    if (s <= env[i].t) {
+      const a = env[i - 1]
+      const b = env[i]
+      return b.t - a.t < 1e-6 ? b.v : a.v + ((b.v - a.v) * (s - a.t)) / (b.t - a.t)
+    }
+  }
+  return env[env.length - 1].v
+}
+// the multiplier of the fade handles, rel = seconds since the clip started
+export function fadeAt(rel, dur, fadeIn, fadeOut) {
+  let g = 1
+  if (fadeIn > 0 && rel < fadeIn) g *= Math.max(0, rel / fadeIn)
+  if (fadeOut > 0 && rel > dur - fadeOut) g *= Math.max(0, (dur - rel) / fadeOut)
+  return g
+}
 const avFields = (c, n) => {
   const s = streamAudioOf(c, n)
   const o = {}
   if (s.volume !== 1) o.volume = s.volume
   if (s.mute) o.mute = true
   if (s.clean) o.clean = s.clean
+  if (s.env && s.env.length) o.env = s.env
+  if (s.fadeIn) o.fadeIn = s.fadeIn
+  if (s.fadeOut) o.fadeOut = s.fadeOut
   return o
 }
 // a change of one clip's audio settings; the clean-up part is merged into what is there
@@ -198,6 +222,9 @@ const mergeAudio = (cur, patch) => {
   const { clean, ...rest } = patch
   const out = { ...cur, ...rest }
   if (clean) out.clean = { ...(cur.clean || {}), ...clean }
+  // an empty curve / no fade is just not stored
+  if ('env' in rest && (!rest.env || !rest.env.length)) delete out.env
+  for (const k of ['fadeIn', 'fadeOut']) if (k in rest && !(rest[k] > 0)) delete out[k]
   return out
 }
 // is the clean-up of this clip switched on?
@@ -209,6 +236,17 @@ const nextFree = (clips, s, dur) => {
     if (s < xe - 1e-6 && s + dur > x.start + 1e-6) s = xe
   }
   return s
+}
+
+// After a clip is cut in two, the fade-out belongs to the end piece only and the fade-in to the first piece only.
+const noFade = (c, side) => {
+  let out = c
+  if (c.av) out = { ...out, av: Object.fromEntries(Object.entries(c.av).map(([n, s]) => [n, Object.fromEntries(Object.entries(s).filter(([k]) => k !== side))])) }
+  if (side in out) {
+    out = { ...out }
+    delete out[side]
+  }
+  return out
 }
 
 // Cut the time range [t0, t1) out of every track and close the gap: the main track, overlay clips, audio clips and
@@ -230,10 +268,11 @@ function cutRange(cur, t0, t1) {
     const hasRight = end > t1 + EPS
     const a = srcAt(c, t0)
     const b = srcAt(c, t1)
-    if (hasLeft) clips.push(c.reverse ? part(orig, a, orig.out) : part(orig, orig.in, a))
+    if (hasLeft) clips.push(noFade(c.reverse ? part(orig, a, orig.out) : part(orig, orig.in, a), hasRight ? 'fadeOut' : ''))
     if (hasRight) {
       const r = c.reverse ? part(orig, orig.in, b) : part(orig, b, orig.out)
-      clips.push({ ...r, id: hasLeft ? uid() : orig.id, transition: hasLeft ? null : orig.transition, gap: hasLeft ? 0 : orig.gap })
+      const piece = { ...r, id: hasLeft ? uid() : orig.id, transition: hasLeft ? null : orig.transition, gap: hasLeft ? 0 : orig.gap }
+      clips.push(hasLeft ? noFade(piece, 'fadeIn') : piece)
     }
   }
   // items that sit anywhere in time (overlay clips and audio clips): cut, and move left what came after
@@ -248,10 +287,11 @@ function cutRange(cur, t0, t1) {
       const a = srcAt(c, t0)
       const b = srcAt(c, t1)
       const out = []
-      if (hasLeft) out.push(c.reverse ? part(orig, a, orig.out) : part(orig, orig.in, a))
+      if (hasLeft) out.push(noFade(c.reverse ? part(orig, a, orig.out) : part(orig, orig.in, a), hasRight ? 'fadeOut' : ''))
       if (hasRight) {
         const r = c.reverse ? part(orig, orig.in, b) : part(orig, b, orig.out)
-        out.push({ ...r, id: hasLeft ? uid() : orig.id, start: t0 })
+        const piece = { ...r, id: hasLeft ? uid() : orig.id, start: t0 }
+        out.push(hasLeft ? noFade(piece, 'fadeIn') : piece)
       }
       return out
     })
@@ -289,9 +329,9 @@ function splitAudioOnly(state, ids, t) {
   const audioClips = [...state.audioClips, ...detached.map((d) => d.clip)].flatMap((x) => {
     if (!cutIds.has(x.id) || isLocked(state, x.id) || !(t > x.start + MIN_CLIP && t < x.start + (x.out - x.in) - MIN_CLIP)) return [x]
     const mid = x.in + (t - x.start)
-    const right = { ...x, id: uid(), in: mid, start: t }
+    const right = noFade({ ...x, id: uid(), in: mid, start: t }, 'fadeIn')
     select.push(right.id)
-    return [{ ...x, out: mid }, right]
+    return [noFade({ ...x, out: mid }, 'fadeOut'), right]
   })
   if (!select.length) return state
   return { ...commit(state, { clips, audioClips }), audioTracks: tracks, selection: select }
@@ -601,7 +641,7 @@ export function reducer(state, a) {
           audioClips = state.audioClips.flatMap((x) => {
             if (x.groupId !== ol.groupId || !(a.t > x.start + MIN_CLIP && a.t < x.start + (x.out - x.in) - MIN_CLIP)) return [x]
             const c2 = x.in + (a.t - x.start)
-            return [{ ...x, out: c2 }, { ...x, id: uid(), in: c2, start: a.t, groupId: gid }]
+            return [noFade({ ...x, out: c2 }, 'fadeOut'), noFade({ ...x, id: uid(), in: c2, start: a.t, groupId: gid }, 'fadeIn')]
           })
         }
         return { ...commit(state, { overlayClips, audioClips }), selection: [rightId] }
@@ -611,8 +651,8 @@ export function reducer(state, a) {
       const c = l.find((x) => a.t > x.start + MIN_CLIP && a.t < x.start + x.dur - MIN_CLIP)
       if (!c) return state
       const sr = splitRanges(c, a.t)
-      const left = newClip(c, sr.first)
-      const right = newClip(c, { ...sr.second, id: uid(), transition: null, gap: 0 })
+      const left = noFade(newClip(c, sr.first), 'fadeOut')
+      const right = noFade(newClip(c, { ...sr.second, id: uid(), transition: null, gap: 0 }), 'fadeIn')
       const clips = state.clips.flatMap((x) => (x.id === c.id ? [left, right] : [x]))
       return { ...commit(state, { clips }), selection: [right.id] }
     }

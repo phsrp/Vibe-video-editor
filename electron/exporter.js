@@ -39,6 +39,31 @@ function runFfmpeg(ffmpegPath, args, onStdout, cwd) {
 
 const fit = (w, h) => `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1`
 
+// ---- is the finished file what it should be? Length, picture, sound, and every frame can be decoded.
+async function checkOutput(ffmpegPath, file, plan) {
+  const problems = []
+  const warnings = []
+  let size = 0
+  try {
+    size = fs.statSync(file).size
+  } catch {}
+  if (size < 1000) return { ok: false, problems: ['The file is empty or missing.'], warnings, duration: 0, expected: plan.totalSec, size }
+  const info = await new Promise((resolve) => require('child_process').execFile(ffmpegPath, ['-hide_banner', '-i', file], { windowsHide: true, maxBuffer: 8e6 }, (_e, _o, se) => resolve(String(se || ''))))
+  const dm = /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(info)
+  const duration = dm ? +dm[1] * 3600 + +dm[2] * 60 + +dm[3] : 0
+  const expected = plan.totalSec + (process.env.VIBE_SELFTEST && process.env.VIBE_TEST_BADCHECK ? 10 : 0) // (the test makes the check fail on purpose)
+  const hasVideo = /Stream #0:\d+[^\n]*: Video:/.test(info)
+  const hasAudio = /Stream #0:\d+[^\n]*: Audio:/.test(info)
+  if (!plan.audioOnly && !hasVideo) problems.push('The file has no picture.')
+  if (plan.audio && plan.audio.length && !hasAudio) problems.push('The sound is missing from the file.')
+  const tol = Math.max(0.3, expected * 0.015)
+  if (Math.abs(duration - expected) > tol) problems.push(`The file is ${duration.toFixed(1)} seconds long, but it should be ${expected.toFixed(1)} seconds.`)
+  // decode all of it: damaged data shows up as messages here
+  const msgs = await new Promise((resolve) => require('child_process').execFile(ffmpegPath, ['-v', 'error', '-nostats', '-i', file, '-f', 'null', '-'], { windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (_e, _o, se) => resolve(String(se || '').split('\n').map((l) => l.trim()).filter(Boolean))))
+  if (msgs.length) warnings.push(`Decoding the file gave ${msgs.length} warning${msgs.length === 1 ? '' : 's'}: ${msgs[0].slice(0, 160)}`)
+  return { ok: problems.length === 0, problems, warnings, duration, expected, size, hasVideo, hasAudio }
+}
+
 // ---- the final ffmpeg command: join pieces, mix audio, encode
 // Every source file is opened inside the filter script (movie / amovie), not with "-i" on the command line.
 // Windows only allows about 32,000 characters for a command, so a long timeline (one piece per clip) would not fit,
@@ -156,8 +181,23 @@ function buildFinal(plan, dir, info) {
       }
       if (Math.abs(sp - 1) > 1e-6) chain += `,atempo=${sp.toFixed(5)}`
       chain += `,volume=${c.vol}`
+      // the volume curve: piecewise straight lines between the keyframes (seconds from the start of the clip)
+      if (c.env && c.env.length) {
+        const k = c.env.slice(0, 40).map((p) => ({ t: Math.max(0, +p.t.toFixed(3)), v: Math.max(0, Math.min(2, +p.v.toFixed(3))) }))
+        let expr = String(k[k.length - 1].v)
+        for (let i = k.length - 2; i >= 0; i--) {
+          const a = k[i]
+          const b = k[i + 1]
+          const seg = b.t - a.t < 0.001 ? String(b.v) : `(${a.v}+(${(b.v - a.v).toFixed(4)})*(t-${a.t})/${(b.t - a.t).toFixed(4)})`
+          expr = `if(lt(t\,${b.t})\,${seg}\,${expr})`
+        }
+        chain += `,volume='if(lt(t\,${k[0].t})\,${k[0].v}\,${expr})':eval=frame`
+      }
       if (c.fadeIn > 0) chain += `,afade=t=in:st=0:d=${c.fadeIn}`
       if (c.fadeOut > 0) chain += `,afade=t=out:st=${Math.max(0, c.dur - c.fadeOut)}:d=${c.fadeOut}`
+      // the fade handles of the clip itself (the two above are the crossfades of transitions)
+      if (c.ufIn > 0) chain += `,afade=t=in:st=0:d=${(+c.ufIn).toFixed(3)}`
+      if (c.ufOut > 0) chain += `,afade=t=out:st=${Math.max(0, c.dur - c.ufOut).toFixed(3)}:d=${(+c.ufOut).toFixed(3)}`
       // (script mode: adelay leaves odd timestamps on movie sources, which made a later atrim cut the sound short)
       if (c.at > 0.0005) chain += `,adelay=${Math.round(c.at * 1000)}:all=1${script ? ',asetpts=N/SR/TB' : ''}`
       const label = `[a${ti}_${ci}]`
@@ -329,6 +369,12 @@ function register({ ffmpegPath, getWindow }) {
   })
 
   ipcMain.handle('export:final', async (e, plan) => {
+    // The file is written under a temporary name next to the final one. Only a finished file that passed the check takes the real name,
+    // so a failed or cancelled export can never replace a good file with a broken one.
+    const finalOut = plan.out
+    const ext = path.extname(finalOut)
+    const partial = path.join(path.dirname(finalOut), path.basename(finalOut, ext) + '.partial' + ext)
+    plan.out = partial
     // Usually the files are given to ffmpeg as "-i" inputs. Windows allows about 32,000 characters for a command, so when
     // the project has too many pieces for that, the files are opened from the script file instead (no limit).
     // clips with noise reduction: measure how loud their noise is first (the same way the preview does)
@@ -341,6 +387,7 @@ function register({ ffmpegPath, getWindow }) {
     const tooLong = args.reduce((sum, a) => sum + String(a).length + 3, 0) > 28000
     if (tooLong || process.env.VIBE_FORCE_SCRIPT) args = buildFinal(plan, job.dir, await probePlan(ffmpegPath, plan))
     let buf = ''
+    try {
     await runFfmpeg(ffmpegPath, args, (d) => {
       buf += d
       const lines = buf.split('\n')
@@ -353,7 +400,28 @@ function register({ ffmpegPath, getWindow }) {
         if (sm && plan.audioOnly) e.sender.send('export:progress', { frame: Math.round((+sm[1] / 1e6) * plan.fps) })
       }
     }, job.dir)
-    return plan.out
+    } catch (err) {
+      try {
+        fs.rmSync(partial, { force: true })
+      } catch {}
+      throw err
+    }
+    e.sender.send('export:progress', { label: 'Checking the finished file…' })
+    const check = await checkOutput(ffmpegPath, partial, plan)
+    let outPath = finalOut
+    if (check.ok) fs.renameSync(partial, finalOut) // (replaces an older file of the same name only now)
+    else {
+      // keep what was made, but under its own name: never on top of the file that was there
+      let bad = path.join(path.dirname(finalOut), path.basename(finalOut, ext) + ' (check failed)' + ext)
+      for (let i = 2; fs.existsSync(bad); i++) bad = path.join(path.dirname(finalOut), path.basename(finalOut, ext) + ' (check failed ' + i + ')' + ext)
+      try {
+        fs.renameSync(partial, bad)
+        outPath = bad
+      } catch {
+        outPath = partial
+      }
+    }
+    return { path: outPath, check }
   })
 
   ipcMain.handle('export:cancel', () => {

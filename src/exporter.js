@@ -137,7 +137,10 @@ export function buildPlan(state, s) {
       const own = streamAudioOf(c, n) // this clip's own volume
       if (own.mute || own.volume <= 0) return
       const next = lay[i + 1]
-      clips.push({ file: m.path, stream: n, srcStart: c.in, srcDur: c.out - c.in, speed: speedOf(c), reverse: !!c.reverse, dur: c.dur, at: c.start, vol: st.volume * own.volume, clean: cleanActive(own.clean) ? own.clean : undefined, fadeIn: c.ov, fadeOut: next ? next.ov : 0 })
+      // the volume curve in seconds from the start of the clip on the timeline (it is kept in seconds of the file)
+      const sp = speedOf(c)
+      const env = (own.env || []).map((k) => ({ t: (c.reverse ? c.out - k.t : k.t - c.in) / sp, v: k.v })).sort((p, q) => p.t - q.t)
+      clips.push({ file: m.path, stream: n, srcStart: c.in, srcDur: c.out - c.in, speed: sp, reverse: !!c.reverse, dur: c.dur, at: c.start, vol: st.volume * own.volume, clean: cleanActive(own.clean) ? own.clean : undefined, env, ufIn: own.fadeIn, ufOut: own.fadeOut, fadeIn: c.ov, fadeOut: next ? next.ov : 0 })
     })
     if (clips.length) audio.push({ name: `Video audio ${n + 1}`, clips })
   }
@@ -150,7 +153,8 @@ export function buildPlan(state, s) {
       if (!m || m.missing) continue
       const own = audioClipVol(a)
       if (own.mute || own.volume <= 0) continue
-      clips.push({ file: m.path, stream: a.stream != null ? a.stream : 0, srcStart: a.in, dur: a.out - a.in, at: a.start, vol: t.volume * own.volume, clean: cleanActive(own.clean) ? own.clean : undefined, fadeIn: 0, fadeOut: 0 })
+      const env = (own.env || []).map((k) => ({ t: k.t - a.in, v: k.v })).sort((p, q) => p.t - q.t)
+      clips.push({ file: m.path, stream: a.stream != null ? a.stream : 0, srcStart: a.in, dur: a.out - a.in, at: a.start, vol: t.volume * own.volume, clean: cleanActive(own.clean) ? own.clean : undefined, env, ufIn: own.fadeIn, ufOut: own.fadeOut, fadeIn: 0, fadeOut: 0 })
     }
     if (clips.length) audio.push({ name: t.name, clips })
   }
@@ -189,7 +193,7 @@ const pad5 = (n) => String(n).padStart(5, '0')
 // Runs the export. onProgress({pct, label}). Resolves with the output path.
 // onPreview(canvas): called now and then with the picture being rendered (effects part);
 // onPreviewUrl(url): a small image of the video being encoded (final part).
-export async function runExport({ state, settings, transitions, outPath, onProgress, onPreview, onPreviewUrl }) {
+export async function runExport({ state, settings, transitions, outPath, onProgress, onPreview, onPreviewUrl, onCheck }) {
   cancelled = false
   exporting = true
   const plan = buildPlan(state, settings)
@@ -300,13 +304,14 @@ export async function runExport({ state, settings, transitions, outPath, onProgr
       }
     }
     if (cancelled) throw new Error('Export cancelled')
-    unsub = window.api.onExportProgress((p) => onProgress({ pct: Math.min(99.5, ((doneT * W_T + p.frame) / units) * 100), label: 'Encoding video…' }))
+    unsub = window.api.onExportProgress((p) => onProgress({ pct: p.label ? 99.5 : Math.min(99.5, ((doneT * W_T + p.frame) / units) * 100), label: p.label || 'Encoding video…' }))
     onProgress({ pct: Math.min(99.5, ((doneT * W_T) / units) * 100), label: 'Encoding video…' })
     if (onPreviewUrl) previewTimer = setInterval(() => onPreviewUrl(toUrl(`${dir}\\preview.jpg`) + '?t=' + Date.now()), 700)
     const forMain = { ...plan, segments: plan.segments.map((s) => (s.kind === 'gl' ? { kind: 'trans', k: s.k, frames: s.frames } : s)) }
-    await window.api.exportFinal(forMain)
+    const res = await window.api.exportFinal(forMain)
     onProgress({ pct: 100, label: 'Done' })
-    return outPath
+    if (onCheck && res && res.check) onCheck(res.check)
+    return (res && res.path) || outPath
   } finally {
     exporting = false
     if (previewTimer) clearInterval(previewTimer)

@@ -33,7 +33,8 @@ const RATE = 200 // values per second, see electron/main.js
 // and starts `left` px into the lane; `view` = {l, r}: the lane pixels that are on screen.
 // gain = the clip's volume (1 = 100%): the waveform grows and shrinks with it; bars that would be taller than the
 // clip (above about 100% loudness) are cut off and drawn in a warm colour.
-export default function Wave({ file, from, to, width, left, view, height, gain = 1 }) {
+// gainFn(secondOfTheFile) = the volume curve and fades of the clip, so the picture follows them (shapeKey changes with it)
+export default function Wave({ file, from, to, width, left, view, height, gain = 1, gainFn, shapeKey }) {
   const ref = useRef(null)
   const peaks = usePeaks(file)
   const x0 = Math.max(0, Math.floor(view.l - left))
@@ -65,13 +66,14 @@ export default function Wave({ file, from, to, width, left, view, height, gain =
       for (let i = a; i < b && i < peaks.length; i++) if (peaks[i] > m) m = peaks[i]
       if (!m) continue
       const full = cv.height - 2
-      const want = (m / 255) * full * gain
+      const gx = gainFn ? gain * gainFn((t0 + t1) / 2) : gain
+      const want = (m / 255) * full * gx
       const h = Math.max(1, Math.round(Math.min(full, want)))
       if (want > full) g.fillStyle = '#f6c177' // too loud for the clip: it would be clipped
       g.fillRect(x, Math.round(mid - h / 2), 1, h)
       if (want > full) g.fillStyle = color
     }
-  }, [peaks, from, to, width, x0, w, height, gain])
+  }, [peaks, from, to, width, x0, w, height, gain, shapeKey])
   if (!file || w <= 0) return null
   return <canvas ref={ref} className="wave" style={{ left: x0, width: w, height }} />
 }

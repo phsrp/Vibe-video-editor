@@ -48,6 +48,7 @@ export default function ExportTab({ active, getProject, onStatus }) {
   const [eta, setEta] = useState(null)
   const [elapsed, setElapsed] = useState(0)
   const [out, setOut] = useState('')
+  const [check, setCheck] = useState(null) // the result of checking the finished file
   const [err, setErr] = useState('')
   const [shown, setShown] = useState(null) // 'canvas' | 'image' | null: what the preview area shows
   const [imgUrl, setImgUrl] = useState('')
@@ -112,6 +113,7 @@ export default function ExportTab({ active, getProject, onStatus }) {
     setPhase('running')
     setErr('')
     setShown(null)
+    setCheck(null)
     setProg({ pct: 0, label: 'Preparing…' })
     setElapsed(0)
     t0.current = performance.now()
@@ -123,6 +125,7 @@ export default function ExportTab({ active, getProject, onStatus }) {
         settings: { ...s, encoder },
         transitions,
         outPath: file,
+        onCheck: setCheck,
         onProgress: (p) => {
           setProg(p)
           const el = (performance.now() - t0.current) / 1000
@@ -322,6 +325,19 @@ export default function ExportTab({ active, getProject, onStatus }) {
               {phase === 'done' ? `Finished in ${fmtDur(elapsed)}` : `${prog.pct.toFixed(0)}% · ${fmtDur(elapsed)} so far${eta != null ? ` · about ${fmtDur(eta)} left` : ''}`}
             </div>
             {phase === 'done' && <div className="hint left" style={{ wordBreak: 'break-all' }}>{out}</div>}
+            {phase === 'done' && check && (
+              <div className={'exp-check' + (check.ok ? ' ok' : ' bad')}>
+                {check.ok ? (
+                  <div>Checked: the file is {check.duration.toFixed(1)} s long (expected {check.expected.toFixed(1)} s){check.hasVideo ? ', has its picture' : ''}{check.hasAudio ? ' and its sound' : ''}, and every frame decodes.</div>
+                ) : (
+                  <>
+                    <div><b>The finished file did not pass the check, so it was saved under its own name and did not replace anything.</b></div>
+                    {check.problems.map((p, i) => <div key={i}>• {p}</div>)}
+                  </>
+                )}
+                {check.warnings.map((w, i) => <div key={i}>• {w}</div>)}
+              </div>
+            )}
           </div>
         )}
       </div>
