@@ -4,3 +4,4 @@ release/
 *.log
 .claude/
 CLAUDE.md
+geode-*/
