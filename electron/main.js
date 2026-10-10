@@ -719,7 +719,7 @@ ipcMain.handle('recent:remove', (_e, file) => {
 
 // ---- settings (kept in the user's app-data)
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json')
-const DEFAULT_SETTINGS = { autoUpdate: true, proxyMode: 'auto' }
+const DEFAULT_SETTINGS = { autoUpdate: true, proxyMode: 'auto', discordPresence: true, discordShowName: false }
 function readSettings() {
   try {
     return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) }
@@ -732,8 +732,26 @@ ipcMain.handle('settings:set', (_e, patch) => {
   const next = { ...readSettings(), ...patch }
   fs.writeFileSync(settingsPath(), JSON.stringify(next), 'utf8')
   applyUpdateSchedule()
+  applyPresence()
   return next
 })
+
+// ---- Discord Rich Presence: "Playing Vibe Editing Suite - Editing a video"
+const discord = require('./discord.js')
+const presence = new discord.Presence()
+let lastPresence = { kind: 'home' }
+function applyPresence() {
+  if (process.env.VIBE_SELFTEST && !process.env.VIBE_DISCORD_PIPE) return // tests never touch the real Discord
+  const s = readSettings()
+  presence.configure({ enabled: s.discordPresence !== false, clientId: s.discordClientId })
+  presence.set(discord.activityFor(lastPresence, !!s.discordShowName))
+}
+ipcMain.handle('presence:set', (_e, p) => {
+  lastPresence = p && typeof p === 'object' ? { kind: String(p.kind || 'home'), name: p.name ? String(p.name) : '' } : { kind: 'home' }
+  applyPresence()
+})
+app.on('before-quit', () => presence.stop())
+app.whenReady().then(applyPresence)
 ipcMain.handle('app:setDirty', (_e, v) => {
   dirty = !!v
 })

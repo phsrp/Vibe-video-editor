@@ -51,6 +51,18 @@ export default function App() {
       localStorage.setItem('vibe.theme', theme)
     } catch {}
   }, [preview, theme, JSON.stringify(activeTheme)])
+  // what is shown on Discord ("Playing ..."): the kind of project in front, and its name if the settings allow it
+  useEffect(() => {
+    let p = { kind: 'home' }
+    const t = tabs.find((x) => x.id === activeId)
+    if (t) p = { kind: t.kind, name: t.title }
+    else if (activeId !== 'home') {
+      const pid = (exports.find((x) => x.id === activeId) || colours.find((x) => x.id === activeId) || {}).projectId
+      const pt = tabs.find((x) => x.id === pid)
+      p = { kind: exports.some((x) => x.id === activeId) ? 'export' : 'video', name: pt ? pt.title : '' }
+    }
+    window.api.setPresence(p).catch(() => {})
+  }, [activeId, tabs.find((x) => x.id === activeId)?.title, tabs.find((x) => x.id === activeId)?.kind, exports.length])
   // the microphone and speakers chosen in the settings
   useEffect(() => {
     setDevices({ out: settings.audioOutputId, inp: settings.audioInputId })

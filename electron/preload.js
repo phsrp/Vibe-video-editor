@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld('api', {
   brushesRead: (name) => ipcRenderer.invoke('brushes:read', name),
   brushesDelete: (name) => ipcRenderer.invoke('brushes:delete', name),
   brushesReadPath: (p) => ipcRenderer.invoke('brushes:readPath', p),
+  setPresence: (p) => ipcRenderer.invoke('presence:set', p),
   storageInfo: () => ipcRenderer.invoke('storage:info'),
   storageClear: (what) => ipcRenderer.invoke('storage:clear', what),
   whisperStatus: () => ipcRenderer.invoke('whisper:status'),

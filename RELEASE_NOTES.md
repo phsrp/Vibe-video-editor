@@ -1,4 +1,2 @@
-- Drawing editor: click a line or shape with the Select tool to pick it up, and drag any selection to move those pixels (Alt-drag moves a copy, arrow keys nudge it)
-- New Lasso tool, and Smart select (AI): click a subject or draw a rough box around it and the AI finds its exact edge
-- Copy, cut and paste of a selection, and pasting a picture from outside creates a new layer
-- Image editor: pasting or adding a picture no longer changes the size of your canvas
+- Discord Rich Presence: your Discord profile can show "Playing Vibe Editing Suite" with what you are doing (editing a video, drawing...) and a button to the GitHub page
+- New switches in Settings > General: turn it off, or choose to show the project name (off by default)

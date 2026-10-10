@@ -216,6 +216,28 @@ export default function SettingsDialog({ settings, setSettings, theme, setTheme,
                 </div>
                 <div className="set-row">
                   <div>
+                    <div className="set-title">Show on Discord</div>
+                    <div className="hint left">Shows “Playing Vibe Editing Suite” and what you are doing (editing a video, drawing…) on your Discord profile while the Discord app is open.</div>
+                  </div>
+                  <label className="switch">
+                    <input type="checkbox" checked={settings.discordPresence !== false} onChange={(e) => setSettings({ discordPresence: e.target.checked })} />
+                    <span className="slider" />
+                  </label>
+                </div>
+                {settings.discordPresence !== false && (
+                  <div className="set-row">
+                    <div>
+                      <div className="set-title">Show the project name on Discord</div>
+                      <div className="hint left">Off by default, so people only see the kind of work, not the name of your project.</div>
+                    </div>
+                    <label className="switch">
+                      <input type="checkbox" checked={!!settings.discordShowName} onChange={(e) => setSettings({ discordShowName: e.target.checked })} />
+                      <span className="slider" />
+                    </label>
+                  </div>
+                )}
+                <div className="set-row">
+                  <div>
                     <div className="set-title">Version {version}</div>
                     <div className="hint left">{result || 'You can always check by hand.'}</div>
                   </div>
