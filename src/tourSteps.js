@@ -40,7 +40,7 @@ export const VIDEO_STEPS = [
   {
     target: '.tl-toolbar button[title^="Captions"]',
     title: 'Captions',
-    text: 'Turns the words in your video into text clips, timed to the speech, and can save a subtitles file. It needs a one-time model download, and works offline after that.',
+    text: 'Turns the words in your video into text clips, timed to the speech, and can save a subtitles file. Then Edit by text lets you cut the video by deleting words, filler words (um, uh) and long pauses. It needs a one-time model download, and works offline after that.',
   },
   {
     // select = the tour picks a clip so there is something to show; tab = it opens that tab of the inspector
@@ -64,7 +64,7 @@ export const VIDEO_STEPS = [
     tab: 'look',
     target: ['.insp-tabs button[data-tab="look"]', '.inspector'],
     title: 'Look: effects, colour and masks',
-    text: 'Blur, glow, green screen and colour correction. Masks show only part of a clip: Smart select finds a person or object with a click and can follow it as it moves (it needs a graphics card and a one-time model download).',
+    text: 'Blur, glow, green screen and colour correction. Masks show only part of a clip: Smart select finds a person or object with a click, and a mask can follow the video with AI (needs a graphics card and a one-time model download) or with Quick tracking (follows the movement, needs nothing).',
   },
   {
     select: 'first',
