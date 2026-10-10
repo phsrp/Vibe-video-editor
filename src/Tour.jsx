@@ -18,13 +18,31 @@ export const markTourSeen = (kind) => {
 const CARD_W = 340
 const GAP = 14
 
-export default function Tour({ steps, rootRef, onClose }) {
+export default function Tour({ steps, rootRef, onClose, onStep }) {
   const [i, setI] = useState(0)
   const [hole, setHole] = useState(null) // the lit-up rectangle (window pixels), or null for a centred card
   const [pos, setPos] = useState({ left: 0, top: 0, ready: false })
   const cardRef = useRef(null)
   const step = steps[i]
   const last = i === steps.length - 1
+  const stepRef = useRef(onStep)
+  stepRef.current = onStep
+
+  // a step may ask for a clip to be selected (so the Inspector has something to show) and for one of its tabs to be opened
+  useEffect(() => {
+    if (step.select && stepRef.current) stepRef.current(step)
+    if (!step.tab) return
+    const open = () => {
+      const b = rootRef.current && rootRef.current.querySelector(`.insp-tabs button[data-tab="${step.tab}"]`)
+      if (b) b.click()
+    }
+    const t1 = setTimeout(open, 250)
+    const t2 = setTimeout(open, 700)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+    }
+  }, [i])
 
   // find the target of this step and keep measuring it (panels open and close, the window is resized)
   useEffect(() => {
@@ -89,13 +107,15 @@ export default function Tour({ steps, rootRef, onClose }) {
     const bottom = hole.top + hole.height
     const cx = clamp(hole.left + hole.width / 2 - w / 2, 12, W - w - 12)
     const cy = clamp(hole.top + hole.height / 2 - h / 2, 12, H - h - 12)
-    const tries = [
-      [cx, bottom + GAP, bottom + GAP + h <= H - 8], // below
-      [cx, hole.top - GAP - h, hole.top - GAP - h >= 8], // above
-      [right + GAP, cy, right + GAP + w <= W - 8], // right
-      [hole.left - GAP - w, cy, hole.left - GAP - w >= 8], // left
-    ]
-    const ok = tries.find((t) => t[2])
+    const sides = {
+      below: [cx, bottom + GAP, bottom + GAP + h <= H - 8],
+      above: [cx, hole.top - GAP - h, hole.top - GAP - h >= 8],
+      right: [right + GAP, cy, right + GAP + w <= W - 8],
+      left: [hole.left - GAP - w, clamp(hole.top, 12, H - h - 12), hole.left - GAP - w >= 8],
+    }
+    // (a step can say which side it prefers, for example to keep the card off the thing it explains)
+    const order = [step.side, 'below', 'above', 'right', 'left'].filter(Boolean)
+    const ok = order.map((s) => sides[s]).find((t) => t && t[2])
     if (ok) setPos({ left: ok[0], top: ok[1], ready: true })
     else setPos({ left: clamp(hole.left + 16, 12, W - w - 12), top: clamp(hole.top + 16, 12, H - h - 12), ready: true }) // a very big target: card sits inside it
   }, [hole, i])

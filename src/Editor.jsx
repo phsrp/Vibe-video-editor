@@ -640,7 +640,19 @@ export default function Editor({ tabId, active, initial, binds, setBinds, onMeta
       }} />}
       {showKeys && <KeybindDialog binds={binds} setBinds={setBinds} onClose={() => setShowKeys(false)} />}
       {showCaptions && <CaptionDialog state={state} dispatch={dispatch} onClose={() => setShowCaptions(false)} />}
-      {tour && active && <Tour steps={VIDEO_STEPS} rootRef={appRef} onClose={closeTour} />}
+      {tour && active && (
+        <Tour
+          steps={VIDEO_STEPS}
+          rootRef={appRef}
+          onClose={closeTour}
+          onStep={(step) => {
+            // the tour picks a clip so the Inspector has something to show ('second' = one that has a clip before it, for Transition)
+            const lay = layout(state.clips)
+            const want = step.select === 'second' ? lay[1] || lay[0] : lay[0]
+            if (want) dispatch({ type: 'select', id: want.id })
+          }}
+        />
+      )}
     </div>
   )
 }

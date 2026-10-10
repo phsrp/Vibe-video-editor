@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { layout, overlayLayout, soleVideoClip, srcAt, tlOf, speedOf, fmtDur, aspectRatio, streamAudioOf, audioClipVol, cleanActive } from './state.js'
+import { layout, overlayLayout, soleVideoClip, srcAt, tlOf, speedOf, fmtDur, aspectRatio, streamAudioOf, audioClipVol, cleanActive, hasAttached } from './state.js'
 import Icon from './Icon.jsx'
 import { PROPS, evalProp, keyAt, KEY_EPS } from './motion.js'
 import EaseEditor from './EaseEditor.jsx'
@@ -15,7 +15,7 @@ function SpeedPanel({ clip, dispatch }) {
   const pos = Math.round((100 * Math.log(sp / 0.1)) / Math.log(80))
   const set = (v, live) => dispatch({ type: 'setSpeed', id: clip.id, speed: v, live })
   return (
-    <Section id="speed" title="Speed and direction">
+    <Section id="speed" title="Speed and direction" dot={speedOf(clip) !== 1 || !!clip.reverse}>
       <div className="mtop">
         <span className="mlabel">Speed</span>
         <span className="minput speed-in">
@@ -171,7 +171,7 @@ function MaskPanel({ clip, dispatch, mode, setMode, still }) {
     </button>
   )
   return (
-    <Section id="mask" title="Mask">
+    <Section id="mask" title="Mask" defaultOpen={false} dot={!!clip.mask}>
       <div className="mtop btnrow">
         {shapeBtn('rect', 'Rectangle')}
         {shapeBtn('ellipse', 'Ellipse')}
@@ -263,7 +263,7 @@ function EffectsPanel({ clip, dispatch, onOpenColour }) {
   const set = (patch) => dispatch({ type: 'setFx', id: clip.id, patch, live: true })
   const any = FX_SLIDERS.some((s) => (fx[s.id] || 0) !== 0) || key.on
   return (
-    <Section id="effects" title="Effects">
+    <Section id="effects" title="Effects" dot={!!(clip.fx && Object.keys(clip.fx).length)}>
       {FX_SLIDERS.map((s) => (
         <FxSlider key={s.id} label={s.label} value={fx[s.id] || 0} min={s.min} max={s.max} onStart={start} onChange={(v) => set({ [s.id]: v })} />
       ))}
@@ -313,13 +313,15 @@ function LabelRow({ state, dispatch }) {
 }
 
 // A section that folds open and closed (a dropdown). Whether it is open is remembered.
-function Section({ id, title, children }) {
+// defaultOpen = how it starts before you ever opened or closed it; dot = a small mark: something in here is changed
+function Section({ id, title, children, defaultOpen = true, dot = false }) {
   const key = 'vibe.sec.' + id
   const [open, setOpen] = useState(() => {
     try {
-      return localStorage.getItem(key) !== '0'
+      const v = localStorage.getItem(key)
+      return v == null ? defaultOpen : v !== '0'
     } catch {
-      return true
+      return defaultOpen
     }
   })
   const toggle = () => {
@@ -333,6 +335,7 @@ function Section({ id, title, children }) {
       <button className="sect-head" onClick={toggle} title={open ? 'Fold this section away' : 'Open this section'}>
         <Icon name="right" size={12} />
         <span>{title}</span>
+        {dot && <i className="sect-dot" title="Something is changed in here" />}
       </button>
       {open && <div className="sect-body">{children}</div>}
     </div>
@@ -496,8 +499,8 @@ function WarpControls({ clip, playhead, dispatch }) {
 // Volume (0 to 200%) and mute of the selected audio clip(s). Every clip has its own setting, so each one can be
 // louder or quieter than the others on its track. (Older projects may still have a lane / track volume: it is shown
 // with a button to put it back to 100%.)
-function AudioPanel({ state, dispatch }) {
-  const ids = state.selection
+function AudioPanel({ state, dispatch, ids: idsProp, embedded }) {
+  const ids = idsProp || state.selection // (inside a clip's Audio tab: the clip's own sounds)
   const id = ids[0]
   const many = ids.length > 1
   const [target, setTarget] = useState(-14)
@@ -555,8 +558,8 @@ function AudioPanel({ state, dispatch }) {
   }
   return (
     <>
-      <div className="insp-clip">{name}</div>
-      <div className="insp-section">Audio</div>
+      {!embedded && <div className="insp-clip">{name}</div>}
+      <Section id="audiovol" title={embedded ? name : 'Volume'} dot={st.mute || Math.abs(st.volume - 1) > 0.005}>
       <div className="mtop">
         <span className="mlabel">Volume</span>
         <button className={'mini wide' + (st.mute ? ' on' : '')} onClick={() => patch({ mute: !st.mute })} title={st.mute ? 'Unmute' : 'Mute'}>
@@ -573,28 +576,6 @@ function AudioPanel({ state, dispatch }) {
         {pct !== 100 && <button className="mini wide" onClick={() => patch({ volume: 1 })}>Reset</button>}
       </div>
       <div className="hint left">{note}</div>
-      <div className="insp-section">Clean up the sound</div>
-      <FxSlider label="Noise reduction (hiss, fan, hum)" value={(st.clean && st.clean.nr) || 0} min={0} max={100} onStart={() => dispatch({ type: 'checkpoint' })} onChange={(v) => patch({ clean: { nr: v } }, true)} />
-      <label className="chk">
-        <input type="checkbox" checked={!!(st.clean && st.clean.rumble)} onChange={(e) => patch({ clean: { rumble: e.target.checked } })} />
-        Cut low rumble (wind, traffic, handling noise)
-      </label>
-      <div className="mtop">
-        <span className="mlabel">Voice</span>
-        <select value={(st.clean && st.clean.voice) || ''} onChange={(e) => patch({ clean: { voice: e.target.value } })}>
-          <option value="">As recorded</option>
-          <option value="clear">Clear voice</option>
-          <option value="podcast">Podcast (full and even)</option>
-          <option value="warm">Warm</option>
-          <option value="phone">Phone call</option>
-        </select>
-      </div>
-      {cleanActive(st.clean) && (
-        <>
-          <div className="hint left">Heard in the preview after a moment (a cleaned copy is made in the background) and used in the export.</div>
-          <button className="mini wide" onClick={() => patch({ clean: { nr: 0, rumble: false, voice: '' } })}>Remove the clean-up</button>
-        </>
-      )}
       {resetLane && Math.abs(laneVol - 1) > 0.005 && (
         <div className="mtop">
           <span className="hint left">This lane also has an older volume setting of {Math.round(laneVol * 100)}%.</span>
@@ -617,7 +598,31 @@ function AudioPanel({ state, dispatch }) {
           {loud && <div className="hint left">{loud}</div>}
         </>
       )}
-      <div className="hint left">Drag the clip to move it, drag its edges to trim it, or press Delete.</div>
+      </Section>
+      <Section id="audioclean" title="Clean up the sound" defaultOpen={false} dot={cleanActive(st.clean)}>
+      <FxSlider label="Noise reduction (hiss, fan, hum)" value={(st.clean && st.clean.nr) || 0} min={0} max={100} onStart={() => dispatch({ type: 'checkpoint' })} onChange={(v) => patch({ clean: { nr: v } }, true)} />
+      <label className="chk">
+        <input type="checkbox" checked={!!(st.clean && st.clean.rumble)} onChange={(e) => patch({ clean: { rumble: e.target.checked } })} />
+        Cut low rumble (wind, traffic, handling noise)
+      </label>
+      <div className="mtop">
+        <span className="mlabel">Voice</span>
+        <select value={(st.clean && st.clean.voice) || ''} onChange={(e) => patch({ clean: { voice: e.target.value } })}>
+          <option value="">As recorded</option>
+          <option value="clear">Clear voice</option>
+          <option value="podcast">Podcast (full and even)</option>
+          <option value="warm">Warm</option>
+          <option value="phone">Phone call</option>
+        </select>
+      </div>
+      {cleanActive(st.clean) && (
+        <>
+          <div className="hint left">Heard in the preview after a moment (a cleaned copy is made in the background) and used in the export.</div>
+          <button className="mini wide" onClick={() => patch({ clean: { nr: 0, rumble: false, voice: '' } })}>Remove the clean-up</button>
+        </>
+      )}
+      </Section>
+      {!embedded && <div className="hint left">Drag the clip to move it, drag its edges to trim it, or press Delete.</div>}
     </>
   )
 }
@@ -641,6 +646,37 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
     dispatch({ type: 'setPlaying', value: true })
   }
 
+  // ---- tabs: only the things that belong to the job, one tab at a time (Clip, Look, Text, Audio, Transition)
+  const [tabPref, setTabPref] = useState(() => {
+    try {
+      return localStorage.getItem('vibe.inspTab') || 'clip'
+    } catch {
+      return 'clip'
+    }
+  })
+  const pickTab = (t) => {
+    setTabPref(t)
+    try {
+      localStorage.setItem('vibe.inspTab', t)
+    } catch {}
+  }
+  // the sound that belongs to this clip: its attached streams, and sound that was detached from it (or from an overlay)
+  const audioIds = []
+  if (clip && media && media.type === 'video') {
+    if (!oclip) (media.audioStreams || []).forEach((_, n) => hasAttached(clip, media, n) && audioIds.push(`sa:${clip.id}:${n}`))
+    state.audioClips.forEach((a) => a.origin === clip.id && audioIds.push(a.id))
+  }
+  const tabs = clip
+    ? [
+        ...(clip.text ? [{ id: 'text', label: 'Text', icon: 'type', tip: 'The words and how they look' }] : []),
+        { id: 'clip', label: 'Clip', icon: 'move', tip: 'Position, size, rotation, warp and speed' },
+        { id: 'look', label: 'Look', icon: 'wand', tip: 'Masks, effects and colour' },
+        ...(audioIds.length ? [{ id: 'audio', label: 'Audio', icon: 'volume', tip: 'Volume and cleaning up the sound' }] : []),
+        ...(!oclip && idx > 0 ? [{ id: 'transition', label: 'Transition', icon: 'film', tip: 'How this clip comes in from the previous one' }] : []),
+      ]
+    : []
+  const tab = tabs.some((t) => t.id === tabPref) ? tabPref : tabs[0] && tabs[0].id
+
   return (
     <aside className={'inspector' + (open ? '' : ' collapsed')}>
       {!open && (
@@ -656,7 +692,7 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
         </span>
       </div>
       <div className="insp-body">
-        <LabelRow state={state} dispatch={dispatch} />
+        {!clip && <LabelRow state={state} dispatch={dispatch} />}
         {state.selection.length === 0 && (
           <div className="hint">Select a clip on the timeline to edit it or give it a transition from the previous clip. Drag a box around items to select several.</div>
         )}
@@ -665,8 +701,16 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
         {clip && (
           <>
             <div className="insp-clip">{clip.text ? 'Text' : media ? media.name : 'Clip'}</div>
+            <div className="insp-tabs" role="tablist">
+              {tabs.map((t) => (
+                <button key={t.id} data-tab={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'on' : ''} title={t.tip} onClick={() => pickTab(t.id)}>
+                  <Icon name={t.icon} size={14} />
+                  <span>{t.label}</span>
+                </button>
+              ))}
+            </div>
 
-            {media && media.type === 'image' && (
+            {tab === 'clip' && media && media.type === 'image' && (
               <label className="insp-row">
                 Show for (seconds)
                 <input
@@ -683,14 +727,23 @@ export default function Inspector({ state, dispatch, transitions, errors, onRelo
               </label>
             )}
 
-            {clip.text && <TextPanel clip={clip} dispatch={dispatch} />}
-            <MotionPanel clip={clip} playhead={state.playhead} dispatch={dispatch} mode={mode} setMode={setMode} freeMode={freeMode} setFreeMode={setFreeMode} fill={fillScale} />
-            {media && media.type === 'video' && <SpeedPanel clip={clip} dispatch={dispatch} />}
-            <MaskPanel clip={clip} dispatch={dispatch} mode={mode} setMode={setMode} />
-            <EffectsPanel clip={clip} dispatch={dispatch} onOpenColour={onOpenColour} />
-
-            {oclip && <div className="hint left">This clip is on an overlay track. Drag it along its track to choose when it appears; transitions only work on the main video track.</div>}
-            {!oclip && (
+            {tab === 'text' && clip.text && <TextPanel clip={clip} dispatch={dispatch} />}
+            {tab === 'clip' && (
+              <>
+                <MotionPanel clip={clip} playhead={state.playhead} dispatch={dispatch} mode={mode} setMode={setMode} freeMode={freeMode} setFreeMode={setFreeMode} fill={fillScale} />
+                {media && media.type === 'video' && <SpeedPanel clip={clip} dispatch={dispatch} />}
+                {oclip && <div className="hint left">This clip is on an overlay track. Drag it along its track to choose when it appears; transitions only work on the main video track.</div>}
+                <LabelRow state={state} dispatch={dispatch} />
+              </>
+            )}
+            {tab === 'look' && (
+              <>
+                <EffectsPanel clip={clip} dispatch={dispatch} onOpenColour={onOpenColour} />
+                <MaskPanel clip={clip} dispatch={dispatch} mode={mode} setMode={setMode} />
+              </>
+            )}
+            {tab === 'audio' && <AudioPanel state={state} dispatch={dispatch} ids={audioIds} embedded />}
+            {tab === 'transition' && !oclip && (
             <Section id="transition" title="Transition">
             {idx === 0 ? (
               <div className="hint left">This is the first clip. A transition goes <i>between</i> two clips, so select a later clip.</div>

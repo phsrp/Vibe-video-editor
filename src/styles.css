@@ -506,3 +506,11 @@ input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var
 /* captions dialog: progress bar */
 .cap-bar { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; margin: 10px 0 4px; }
 .cap-bar span { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+
+/* inspector tabs */
+.insp-tabs { display: flex; gap: 4px; padding: 2px 0 10px; margin-bottom: 6px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 3; }
+.insp-tabs button { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 1px 5px; font-size: 10px; letter-spacing: -0.2px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--dim); cursor: pointer; min-width: 0; }
+.insp-tabs button span { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.insp-tabs button:hover { color: var(--text); background: var(--panel2); }
+.insp-tabs button.on { color: var(--text); background: var(--panel2); border-color: var(--accent); }
+.sect-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 7px; flex: none; }
