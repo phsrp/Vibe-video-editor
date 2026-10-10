@@ -35,6 +35,32 @@ The first time you open the video editor, the image editor or the drawing editor
 
 </div>
 
+## How to download
+
+1. Open the [latest release](https://github.com/phsrp/Vibe-editing-suite/releases/latest) (the purple **download** button at the top of this page does the same).
+2. Under **Assets**, click `Vibe-Editing-Suite-Setup-<version>.exe`.
+3. Run the file you downloaded. It installs just for you (no administrator needed) and puts a shortcut on your desktop and in the Start menu.
+4. **If Windows says "Windows protected your PC":** the installer is not code-signed yet, so Windows is careful with it. Click **More info**, then **Run anyway**.
+
+You only do this once. After that the app checks for a new version each time it opens and asks before downloading it, so you can update from inside the app.
+
+## What the version numbers mean
+
+Every version is three numbers separated by dots, for example **1.7.1**:
+
+```
+  1   .   7   .   1
+  │       │       └── minor update: fixes and small improvements
+  │       └────────── major update: a big batch of new features (counts from 0 to 9)
+  └────────────────── goes up by one when the major number would pass 9
+```
+
+- **Minor update (the last number)** goes up for small changes: bug fixes, polish, small additions. `1.7.0` → `1.7.1`.
+- **Major update (the middle number)** goes up for a big update with new features, and the minor number starts again from 0. `1.7.1` → `1.8.0`. It counts from 0 up to 9.
+- **The first number** only changes when the major number runs out: after `1.9.x` the next big update is `2.0.0`.
+
+So a bigger number on the left always means a newer version: `1.7.1` is newer than `1.7.0`, and `1.8.0` is newer than `1.7.9`.
+
 ## Built with
 
 - [Electron](https://www.electronjs.org/) and [React](https://react.dev/), with WebGL for the preview and transitions
