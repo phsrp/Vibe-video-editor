@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { layout, overlayLayout, soleVideoClip, srcAt, speedOf, aspectRatio, clipPicture } from './state.js'
+import { layout, overlayLayout, soleVideoClip, srcAt, speedOf, aspectRatio, clipPicture, toUrl } from './state.js'
 import { evalTransform, evalProp, keyAt, PROPS, rectToFrame, frameToRect } from './motion.js'
 import { maskPlaced, polyCentre, MAX_POLY, maskAt, frameAt } from './masks.js'
 
@@ -16,12 +16,63 @@ function TrackDialog({ clip, state, media, dispatch, onClose, fix, startPts }) {
   const [warn, setWarn] = useState(false) // no graphics card: very slow, asked once
   const [err, setErr] = useState('')
   const [gpu, setGpu] = useState(null) // the graphics card does the tracking, which is much faster
+  const [aiOk, setAiOk] = useState(null) // the AI model is downloaded and there is a graphics card
+  const [engine, setEngine] = useState('ai') // 'ai' = the real outline, 'quick' = the movement of the picture only
+  const [method, setMethod] = useState('position')
+  const [stopped, setStopped] = useState('') // quick tracking lost the picture: what was tracked was kept
   useEffect(() => {
     import('./smartMask.js').then((m) => m.gpuInfo()).then(setGpu)
+    Promise.all([window.api.modelsStatus(), import('./smartMask.js').then((m) => m.gpuInfo())])
+      .then(([st, g]) => {
+        const ok = !!(st.ready && g.ok)
+        setAiOk(ok)
+        if (!ok) setEngine('quick')
+      })
+      .catch(() => {
+        setAiOk(false)
+        setEngine('quick')
+      })
   }, [])
   const cancel = useRef(false)
   const canTrack = media && media.type === 'video' && clip.mask && (fix || clip.mask.shape === 'poly')
+
+  // the result is a list of moments with an outline each; "fix" keeps the earlier moments
+  const keepResult = (frames, ts, end) => {
+    frames.sort((p, q) => p.t - q.t)
+    if (fix) {
+      const keep = clip.mask.frames.filter((f) => (clip.reverse ? f.t > ts + 0.017 : f.t < ts - 0.017))
+      dispatch({ type: 'setMaskOutline', id: clip.id, frames: [...keep, ...frames].sort((p, q) => p.t - q.t), from: clip.mask.from, to: clip.mask.to })
+    } else dispatch({ type: 'setMaskOutline', id: clip.id, frames, from: Math.min(ts, end), to: Math.max(ts, end) })
+  }
+  // the quick way: follow the movement of the picture inside the mask (no model, no graphics card)
+  const runQuick = async () => {
+    cancel.current = false
+    setErr('')
+    try {
+      const { trackPlanar } = await import('./planarTrack.js')
+      setProg([0, 1])
+      const span = Math.min(secs, remain)
+      const end = fix ? (clip.reverse ? clip.mask.from : clip.mask.to) : Math.min(clip.out, Math.max(clip.in, clip.reverse ? ts - span * sp : ts + span * sp))
+      const len = Math.abs(end - ts)
+      if (fix && !(len >= 0.1)) throw new Error('There is nothing after this moment to track.')
+      const n = Math.max(2, Math.min(900, Math.round(len * 30)) + 1)
+      const times = Array.from({ length: n }, (_, i) => ts + ((end - ts) * i) / (n - 1))
+      const r = await trackPlanar({ url: toUrl(media.path), startPts: fix ? startPts : clip.mask.pts, times, method, onProgress: (d, t) => setProg([d, t]), isCancelled: () => cancel.current })
+      if (!r) return onClose()
+      if (r.frames.length < 2) throw new Error('It could not follow this: ' + (r.lost || 'not enough detail inside the mask') + '.')
+      const last = r.frames[r.frames.length - 1].t
+      keepResult(r.frames, ts, r.lost ? last : end)
+      if (r.lost) {
+        setProg(null)
+        setStopped(`Tracking stopped: it ${r.lost}. What was tracked before that was kept. Try a mask with more detail inside, or the AI tracking.`)
+      } else onClose()
+    } catch (e) {
+      setProg(null)
+      setErr('Tracking failed: ' + String((e && e.message) || e))
+    }
+  }
   const run = async (confirmed) => {
+    if (engine === 'quick') return runQuick()
     cancel.current = false
     setErr('')
     try {
@@ -61,12 +112,8 @@ function TrackDialog({ clip, state, media, dispatch, onClose, fix, startPts }) {
         isCancelled: () => cancel.current,
       })
       if (!frames) return onClose()
-      frames.sort((p, q) => p.t - q.t)
-      if (fix) {
-        // the moments before this one stay as they are; this one and everything after it are the new tracking
-        const keep = clip.mask.frames.filter((f) => (clip.reverse ? f.t > ts + 0.017 : f.t < ts - 0.017))
-        dispatch({ type: 'setMaskOutline', id: clip.id, frames: [...keep, ...frames].sort((p, q) => p.t - q.t), from: clip.mask.from, to: clip.mask.to })
-      } else dispatch({ type: 'setMaskOutline', id: clip.id, frames, from: Math.min(ts, end), to: Math.max(ts, end) })
+      // (when fixing: the moments before this one stay as they are; this one and everything after it are the new tracking)
+      keepResult(frames, ts, end)
       onClose()
     } catch (e) {
       setProg(null)
@@ -83,6 +130,13 @@ function TrackDialog({ clip, state, media, dispatch, onClose, fix, startPts }) {
             <div className="bar"><div className="bar-fill" style={{ width: (100 * prog[0]) / Math.max(1, prog[1]) + '%' }} /></div>
             <div className="btn-row" style={{ marginTop: 12 }}>
               <button onClick={() => (cancel.current = true)}>Cancel</button>
+            </div>
+          </>
+        ) : stopped ? (
+          <>
+            <p className="hint-sm">{stopped}</p>
+            <div className="btn-row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
+              <button className="primary" onClick={onClose}>OK</button>
             </div>
           </>
         ) : warn ? (
@@ -109,8 +163,32 @@ function TrackDialog({ clip, state, media, dispatch, onClose, fix, startPts }) {
                   <input type="number" min="0.5" max={remain} step="0.5" value={secs} onChange={(e) => setSecs(Math.max(0.5, Math.min(remain, +e.target.value || 0.5)))} />
                   <span className="unit">sec</span>
                 </label>}
-                {gpu && gpu.ok && !gpu.weak && <p className="hint-sm" style={{ margin: '6px 0' }}>On your graphics card this takes roughly {Math.max(2, Math.round(Math.min(secs, remain) * 9))} seconds.</p>}
-                <label className="chk"><input type="checkbox" checked={quad} onChange={(e) => setQuad(e.target.checked)} />Straight edges, 4 corners (licence plates, screens, signs)</label>
+                <div className="mtop">
+                  <span className="mlabel">How to follow it</span>
+                  <select value={engine} onChange={(e) => setEngine(e.target.value)}>
+                    <option value="ai" disabled={aiOk === false}>AI: follows the real outline{aiOk === false ? ' (needs the AI model and a graphics card)' : ''}</option>
+                    <option value="quick">Quick: follows the movement of the picture</option>
+                  </select>
+                </div>
+                {engine === 'quick' ? (
+                  <>
+                    <div className="mtop">
+                      <span className="mlabel">It can</span>
+                      <select value={method} onChange={(e) => setMethod(e.target.value)}>
+                        {['position:Move', 'rotation:Move and turn', 'similarity:Move, turn and change size'].map((o) => {
+                          const [v, l] = o.split(':')
+                          return <option key={v} value={v}>{l}</option>
+                        })}
+                      </select>
+                    </div>
+                    <p className="hint-sm" style={{ margin: '6px 0' }}>The mask keeps its shape and moves with the picture inside it. Fast, and needs no model or graphics card. It needs some detail (edges, texture) inside the mask.</p>
+                  </>
+                ) : (
+                  <>
+                    {gpu && gpu.ok && !gpu.weak && <p className="hint-sm" style={{ margin: '6px 0' }}>On your graphics card this takes roughly {Math.max(2, Math.round(Math.min(secs, remain) * 9))} seconds.</p>}
+                    <label className="chk"><input type="checkbox" checked={quad} onChange={(e) => setQuad(e.target.checked)} />Straight edges, 4 corners (licence plates, screens, signs)</label>
+                  </>
+                )}
               </>
             )}
             {err && <p className="hint-sm" style={{ color: 'var(--love, #eb6f92)' }}>{err}</p>}
@@ -563,6 +641,12 @@ export default function MaskOverlay({ state, dispatch, mode, setMode, box, getFr
     <div className="xf-overlay mask-ov">
       {ask && <TrackDialog clip={clip} state={state} media={media} dispatch={dispatch} onClose={() => setAsk(false)} />}
       {fixing && <TrackDialog fix startPts={fpts} clip={clip} state={state} media={media} dispatch={dispatch} onClose={() => setFixing(false)} />}
+      {!tracked && !noTrack && m.shape === 'poly' && media && media.type === 'video' && (
+        <div className="mask-fixbar">
+          <span>This mask stays where it is.</span>
+          <button className="mini" onClick={() => setAsk(true)}>Follow it through the video…</button>
+        </div>
+      )}
       {tracked && (
         <div className="mask-fixbar">
           <span>{editable ? 'Fix this moment: drag the points or the shape. Then' : 'The subject is not in the picture here.'}</span>
